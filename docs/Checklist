@@ -1,159 +1,151 @@
-CHECKLIST
-PHASE 0 — FOUNDATION (COMPLETE)
+This checklist is the source of truth for the Full Bodied Animation mod architecture and implementation plan.
 
-Goal: Plugin boots, runs, and owns its lifecycle.
+Goals:
+Build a clean, future-proof SKSE plugin that applies transforms, morphs, FX, and gameplay state changes driven by animation timing.
+Support both INI-based timelines and HKX annotation timelines.
+Support paired animations (caster / target) with strict role separation.
+Avoid recreating or copying legacy mods; prior working code is reference only.
+Prefer minimal systems with clear responsibilities and a single source of truth.
 
- [X] Create SKSE plugin (FBPlugin)
+Rules:
+No feature is considered complete until explicitly confirmed.
+Systems are provisional until proven stable, then become canon.
+Do not introduce new timing systems unless required.
+Do not duplicate logic across modules.
 
- [X] Logging initialized and visible
+END OF ASSIGNMENT DESCRIPTION
 
- [X] FBConfig loads initial snapshot
+PHASE 0 – BOOTSTRAP (COMPLETE)
 
- [X] Generation system exists and increments
+Goal: Confirm a working CommonLibSSE-NG plugin with logging and Papyrus communication.
 
- [X] FBUpdate pump starts and ticks
+[x] CommonLibSSE-NG “hello world” plugin builds and loads
+[x] SKSEPluginLoad is wired correctly
+[x] Logging is verified in the SKSE log directory
+[x] Papyrus native registration works
+[x] Papyrus to native call path verified in game
 
- [X] Papyrus registration works
+Exit condition:
+The plugin loads, logs, and responds to a Papyrus call.
 
- [X] Manual test hooks (test event injection)
+PHASE 1 – CORE BACKBONE (COMPLETE)
 
-Checkpoint:
-Plugin loads, logs generation, update pump ticks.
+Goal: Establish the stable execution backbone.
 
-PHASE 1 — EVENT PIPELINE (COMPLETE)
+Core Modules
 
-Goal: Prove end-to-end event → execution.
+[x] FBPlugin entry point, registration, lifetime owner
+[x] FBConfig immutable snapshot loading and reload
+[x] FBEvents event queue push and drain
+[x] FBUpdate per-tick execution
+[x] FBUpdatePump timing driver
+[x] FBTransform NiNode scale and transform application
+[x] FBMorph Racemenu slider and expression interface (stub acceptable)
+[x] FBFx FX placeholder (stub acceptable)
+[x] FBState gameplay state placeholder (stub acceptable)
+[x] FBStructs shared data types (Generation, FBCommand, TweenSpec, etc.)
 
- [X] FBEvents queue implemented (Push / Drain)
+Proven Behaviors
 
- [X] Events persist until drained
+[x] Events can be queued and drained
+[x] Update pump ticks continuously
+[x] Commands execute on valid 3D actors
+[x] Transform scaling visibly works in game
+[x] Generation swap on config reload works
 
- [X] FBUpdate drains every tick
+Exit condition:
+A test FB event causes a visible head scale in game.
 
- [X] Event → script mapping via snapshot
+PHASE 1.5 – TIMELINES AND SCRIPTING (IN PROGRESS)
 
- [X] Command dispatch by type
+Goal: Introduce author-driven timelines without changing the execution backbone.
 
-[X] Transform command executes visibly in game
+Timeline Data Model
 
-Checkpoint:
-A config-defined event causes a visible head scale in game.
-✔ ACHIEVED
+[x] TimedCommand defined as time plus FBCommand
+[x] FBCommand remains execution-level with no timing data
+[x] Snapshot stores eventMap mapping event tags to script keys
+[x] Snapshot stores scripts mapping script keys to TimedCommand lists
 
-🔹 PHASE 1.5 — SCRIPT TIMELINES (INCOMPLETE)
+INI Parsing
 
-Goal: Support time-offset commands authored in INI or HKX annotations.
+File layout rules
 
-Responsibilities
+[x] One global FullBodiedIni.ini in the mod root for debug and global settings
+[x] One FB_<hkxname>.ini per animation
+[x] Per-animation INI lives in the same folder as its HKX
+[x] Open Animation Replacer variant folders are supported
+[x] Multiple HKX files can exist in a variants<baseclip> folder
+[x] Each HKX has its own corresponding FB_*.ini
 
-FBConfig parses timestamped commands into TimedCommand
+INI command rules
 
-FBUpdate instantiates and advances timeline instances
+[ ] Sections identify animation and role (Caster or Target)
+[ ] Each command line begins with a timestamp
+[ ] Commands without a prefix target the Caster
+[ ] Commands prefixed with 2_ target the Target
+[ ] Parsing produces FBCommand objects only
+[ ] No execution occurs during parsing
 
-Commands are emitted at the correct runtime offsets
+Node Mapping
 
-No dependency on animation system internals yet
+[x] Stable author-facing node keys are defined (Head, Spine1, LUpperArm, etc.)
+[ ] Node mapper moved to a neutral location such as FBTransform
+[ ] Legacy FB::Scaler naming removed
+[ ] Node mapping reused by Transform and Morph systems
 
-Checklist
+Timeline Execution
 
-[] Extend Snapshot to include TimedCommand
+[ ] Track elapsed time since animation start
+[ ] Execute TimedCommands when their timestamp is reached
+[ ] Ensure commands execute only once
+[ ] Support multiple overlapping timelines for caster and target
+[ ] Keep execution logic entirely inside FBUpdate
 
-[] FBConfig loads timestamped scripts from INI
+Exit condition:
+INI-defined timelines execute at the correct times during animation playback.
 
-[] FBUpdate creates timeline instances on FBEvent
+PHASE 2 – HKX AND ANNOTATION INTEGRATION (PLANNED)
 
-[] Commands fire when elapsed >= time
+Goal: Drive timelines from HKX annotations instead of INI files.
 
-[] Multiple timelines can run concurrently
+[ ] Detect animation start events for paired and solo animations
+[ ] Read annotation timestamps from HKX files
+[ ] Convert annotations into TimedCommands
+[ ] Reuse the same execution pipeline as INI timelines
+[ ] Avoid duplicating execution logic
 
-[] No tweening yet (instant execution only)
+Exit condition:
+INI timelines and HKX annotations produce identical runtime behavior.
 
-Checkpoint
+PHASE 3 – TWEENING AND EASING (PLANNED)
 
-A single FBEvent causes multiple commands to fire at different times. All commands executed are described in the INI and are not hardwired into the script. 
+Goal: Smooth transitions with predictable behavior.
 
+[ ] Tween data stored separately from execution
+[ ] Linear easing used by default
+[ ] Easing types optional and extensible
+[ ] FBUpdate owns interpolation state
+[ ] FBTransform and FBMorph remain stateless executors
 
-PHASE 2 — FBTransform STABILIZATION (IN PROGRESS)
+PHASE 4 – GAMEPLAY STATE EFFECTS (PLANNED)
 
-Goal: Make transform system correct, safe, and reusable.
+Goal: Safe gameplay changes tied to animations.
 
- Clean FBTransform API (ApplyScale, etc.)
+[ ] FBState executes gameplay changes
+[ ] No Papyrus required at runtime
+[ ] State effects automatically revert when timelines end
 
- Resolve actor correctly (1P/3P aware)
+PHASE 5 – TOOLING AND OAR UI (FUTURE)
 
- Node lookup hardened
+[ ] Runtime reload without restarting the game
+[ ] Open Animation Replacer UI integration
+[ ] Live timeline inspection and debugging
 
- Remove retry/requeue logic (temporary)
+CANON NOTES
 
- Add reset / absolute vs relative semantics
-
- Ensure no per-tick reapplication unless intended
-
-Checkpoint:
-Transforms apply reliably to player and NPCs without hacks.
-
-PHASE 3 — FBMorph (NEXT)
-
-Goal: Add morph support using the same command pipeline.
-
- FBMorph module created
-
- Morph commands dispatched from FBUpdate
-
- RaceMenu slider / expression application
-
- Snapshot-driven, generation-aware
-
- No dependency on FBTransform internals
-
-Checkpoint:
-A config event drives a visible morph change.
-
-PHASE 4 — TWEENING
-
-Goal: Smooth, time-based transitions.
-
- Shared TweenSpec interpretation
-
- FBTransform supports tweened scale
-
- FBMorph supports tweened morph
-
- Easing types implemented
-
- Tween state stored outside FBUpdate
-
-Checkpoint:
-Transforms/morphs interpolate over time correctly.
-
-PHASE 5 — FBState
-
-Goal: Gameplay state manipulation.
-
- FBState module introduced
-
- Commands for AI, controls, flags, etc.
-
- Explicit separation from FBFx
-
-PHASE 6 — TOOLING / OAR (FAR FUTURE)
-
-Goal: Authoring and live editing support.
-
- Config hot-reload hardened
-
- Optional OAR UI integration
-
- Runtime editing without restart (best-effort)
-
-OPERATING RULES (RE-CANONIZED)
-
-No feature advances without checklist update
-
-Stabilize before extending
-
-Prefer clarity over cleverness
-
-Old project files are reference only
-
-If something works, identify why before abstracting it
+FBUpdate Tick never parses text and only executes commands.
+FBConfig is the only place where INI or annotation parsing occurs.
+FBUpdate never mutates configuration data.
+Requeue logic is optional and currently disabled.
+Caster and Target are the only supported roles.
