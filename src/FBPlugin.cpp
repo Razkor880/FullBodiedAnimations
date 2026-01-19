@@ -1,38 +1,35 @@
+#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/spdlog.h>
+
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <utility>
+
 #include "FBConfig.h"
 #include "FBEvents.h"
 #include "FBUpdate.h"
-
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
-
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/basic_file_sink.h>
-
-#include <utility>
-#include <filesystem>
-#include <cstdint>
-#include <memory>
 
 static FBConfig g_config;
 static FBEvents g_events;
 static std::unique_ptr<FBUpdate> g_update;
 static std::unique_ptr<FBUpdatePump> g_pump;
 
-namespace
-{
+namespace {
     FBConfig* g_config_ptr = nullptr;
     bool Papyrus_ReloadConfig(RE::StaticFunctionTag*);
     std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*);
     std::int32_t Papyrus_TickOnce(RE::StaticFunctionTag*);
 
-    void SetupLogging()
-    { 
+    void SetupLogging() {
         auto path = SKSE::log::log_directory();
         if (!path) {
             return;
         }
 
-        *path /= "FullBodiedLog.log"; 
+        *path /= "FullBodiedLog.log";
 
         auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
         auto logger = std::make_shared<spdlog::logger>("global", std::move(sink));
@@ -43,8 +40,7 @@ namespace
         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%1] %v");
     }
 
-    bool Papyrus_ReloadConfig(RE::StaticFunctionTag*) 
-    {
+    bool Papyrus_ReloadConfig(RE::StaticFunctionTag*) {
         if (!g_config_ptr) {
             spdlog::error("[FB] ReloadConfig called but config ptr is null");
             return false;
@@ -58,8 +54,7 @@ namespace
         return ok;
     }
 
-    bool RegisterPapyrus()
-    { 
+    bool RegisterPapyrus() {
         g_config_ptr = std::addressof(g_config);
 
         auto* papyrus = SKSE::GetPapyrusInterface();
@@ -74,26 +69,21 @@ namespace
             vm->RegisterFunction("TickOnce", "FullBodied", Papyrus_TickOnce);
             return true;
         });
-
     }
 
-    std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*)
-    { 
+    std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*) {
         auto drained = g_events.Drain();
         spdlog::info("[FB] DrainEvents: drained count={}", drained.size());
 
         if (!drained.empty()) {
             const auto& e = drained.front();
-            spdlog::info("[FB] DrainEvents: first tag='{}' actorFormID=0x{:08X}",
-            e.tag, e.actor.formID);
+            spdlog::info("[FB] DrainEvents: first tag='{}' actorFormID=0x{:08X}", e.tag, e.actor.formID);
         }
         return static_cast<std::int32_t>(drained.size());
     }
 
-    std::int32_t Papyrus_TickOnce(RE::StaticFunctionTag*) 
-    {
-        if (!g_update) 
-        {
+    std::int32_t Papyrus_TickOnce(RE::StaticFunctionTag*) {
+        if (!g_update) {
             spdlog::error("[FB] TickOnce called but FBUpdate not initialized");
             return 0;
         }
@@ -103,10 +93,7 @@ namespace
     }
 }
 
-
-
-SKSEPluginLoad(const SKSE::LoadInterface* skse) 
-{
+SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     SetupLogging();
 
@@ -117,13 +104,13 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
         return false;
     }
 
-    spdlog::info("[FB] FBUpdate Initialized");
-
     spdlog::info("[FB] Config generation: {}", g_config.GetGeneration());
 
     g_update = std::make_unique<FBUpdate>(g_config, g_events);
+    spdlog::info("[FB] FBUpdate Initialized");
+
     g_pump = std::make_unique<FBUpdatePump>(*g_update);
-    g_pump->SetTickHz(60.0);
+    // Removed SetTickHz(): not part of current FBUpdatePump surface.
     g_pump->Start();
 
     SKSE::GetMessagingInterface()->RegisterListener([](SKSE::MessagingInterface::Message* msg) {
@@ -158,7 +145,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
             return;
         }
     });
-
 
     return true;
 }

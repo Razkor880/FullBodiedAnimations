@@ -2,19 +2,18 @@
 
 #include <memory>
 
-namespace
-{
+namespace {
     std::shared_ptr<const Snapshot> g_snapshot;
 }
 
-bool FBConfig::LoadInitial()
-{ 
+bool FBConfig::LoadInitial() {
     auto snapshot = std::make_shared<Snapshot>();
     snapshot->generation = 1;
 
     snapshot->eventMap.clear();
     snapshot->scripts.clear();
 
+    // Minimal hardcoded test wiring (Phase 1.5 data shape)
     snapshot->eventMap["FB_TestEvent"] = "TestScript";
 
     FBCommand cmd{};
@@ -24,11 +23,14 @@ bool FBConfig::LoadInitial()
     cmd.opcode = "Scale";
     cmd.target = "NPC Head [Head]";
     cmd.args = "0.8";
-    
-    snapshot->scripts["TestScript"].push_back(cmd);
 
+    TimedCommand tc{};
+    tc.time = 0.0f;
+    tc.command = std::move(cmd);
 
-    g_snapshot = snapshot;
+    snapshot->scripts["TestScript"].push_back(std::move(tc));
+
+    g_snapshot = std::move(snapshot);
     return true;
 }
 
@@ -37,22 +39,16 @@ bool FBConfig::Reload() {
         return false;
     }
 
+    // Minimal: generation bump, future parsing will rebuild maps/scripts.
     auto snapshot = std::make_shared<Snapshot>(*g_snapshot);
     snapshot->generation = g_snapshot->generation + 1;
 
-    // re-parse config will go here
+    // TODO: reload/parse INI and rebuild snapshot->eventMap and snapshot->scripts
 
-    g_snapshot = snapshot;
+    g_snapshot = std::move(snapshot);
     return true;
 }
 
-Generation FBConfig::GetGeneration() const
-{
-    return g_snapshot ? g_snapshot->generation : 0;
-}
+Generation FBConfig::GetGeneration() const { return g_snapshot ? g_snapshot->generation : 0; }
 
-std::shared_ptr<const Snapshot> FBConfig::GetSnapshot() const
-{
-    return g_snapshot;
-}
-
+std::shared_ptr<const Snapshot> FBConfig::GetSnapshot() const { return g_snapshot; }
