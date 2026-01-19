@@ -39,10 +39,6 @@ Core Modules
 [x] FBEvents event queue push and drain
 [x] FBUpdate per-tick execution
 [x] FBUpdatePump timing driver
-[x] FBTransform NiNode scale and transform application
-[x] FBMorph Racemenu slider and expression interface (stub acceptable)
-[x] FBFx FX placeholder (stub acceptable)
-[x] FBState gameplay state placeholder (stub acceptable)
 [x] FBStructs shared data types (Generation, FBCommand, TweenSpec, etc.)
 
 Proven Behaviors
@@ -50,13 +46,12 @@ Proven Behaviors
 [x] Events can be queued and drained
 [x] Update pump ticks continuously
 [x] Commands execute on valid 3D actors
-[x] Transform scaling visibly works in game
 [x] Generation swap on config reload works
 
 Exit condition:
-A test FB event causes a visible head scale in game.
+A test FB event successfully flows through the system and reaches execution.
 
-PHASE 1.5 – TIMELINES AND SCRIPTING (IN PROGRESS)
+PHASE 2 – TIMELINES AND SCRIPTING (IN PROGRESS)
 
 Goal: Introduce author-driven timelines without changing the execution backbone.
 
@@ -90,7 +85,8 @@ INI command rules
 Node Mapping
 
 [x] Stable author-facing node keys are defined (Head, Spine1, LUpperArm, etc.)
-[ ] Node mapper moved to a neutral location such as FBTransform or FBStructs
+[ ] Node mapper implemented in a neutral location (FBStructs or FBTransform)
+[ ] Existing node lists from the old project are used as reference only
 [ ] Node mapping reused by Transform and Morph systems
 
 Timeline Execution
@@ -104,7 +100,44 @@ Timeline Execution
 Exit condition:
 INI-defined timelines execute at the correct times during animation playback.
 
-PHASE 2 – HKX AND ANNOTATION INTEGRATION (PLANNED)
+PHASE 3 – FBTRANSFORM BUILD-OUT (PLANNED)
+
+Goal: Fully implement transform operations for animation-driven body manipulation.
+
+[x] FBTransform module exists and is wired into execution
+[x] Scale operations work visually in game
+
+Remaining work
+
+[ ] Support node translation (local position)
+[ ] Support node rotation (local rotation)
+[ ] Support combined transform operations (scale + rotate + move)
+[ ] Support any valid skeleton NiNode as a target
+[ ] Ensure transforms respect actor 1P / 3P state correctly
+[ ] Keep FBTransform stateless; no timing or tween logic inside
+
+Exit condition:
+FBTransform can apply location, rotation, and scale to any specified node at runtime.
+
+PHASE 4 – FBMORPH BUILD-OUT (PLANNED)
+
+Goal: Fully implement morph and expression support.
+
+[x] FBMorph module exists as a stub
+
+Remaining work
+
+[ ] Support arbitrary RaceMenu slider morphs by name
+[ ] Support multiple simultaneous morphs
+[ ] Support facial expressions (phonemes, expressions, or equivalent)
+[ ] Support target selection (Caster / Target)
+[ ] Ensure morph application is reversible
+[ ] Keep FBMorph stateless; no timing or tween logic inside
+
+Exit condition:
+FBMorph can drive any RaceMenu morph or expression via timeline commands.
+
+PHASE 5 – HKX AND ANNOTATION INTEGRATION (PLANNED)
 
 Goal: Drive timelines from HKX annotations instead of INI files.
 
@@ -117,7 +150,7 @@ Goal: Drive timelines from HKX annotations instead of INI files.
 Exit condition:
 INI timelines and HKX annotations produce identical runtime behavior.
 
-PHASE 3 – TWEENING AND EASING (PLANNED)
+PHASE 6 – TWEENING AND EASING (PLANNED)
 
 Goal: Smooth transitions with predictable behavior.
 
@@ -127,7 +160,7 @@ Goal: Smooth transitions with predictable behavior.
 [ ] FBUpdate owns interpolation state
 [ ] FBTransform and FBMorph remain stateless executors
 
-PHASE 4 – GAMEPLAY STATE EFFECTS (PLANNED)
+PHASE 7 – GAMEPLAY STATE EFFECTS (PLANNED)
 
 Goal: Safe gameplay changes tied to animations.
 
@@ -135,7 +168,7 @@ Goal: Safe gameplay changes tied to animations.
 [ ] No Papyrus required at runtime
 [ ] State effects automatically revert when timelines end
 
-PHASE 5 – TOOLING AND OAR UI (FUTURE)
+PHASE 8 – TOOLING AND OAR UI (FUTURE)
 
 [ ] Runtime reload without restarting the game
 [ ] Open Animation Replacer UI integration
