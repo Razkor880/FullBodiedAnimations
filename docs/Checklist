@@ -40,6 +40,39 @@ Checkpoint:
 A config-defined event causes a visible head scale in game.
 ✔ ACHIEVED
 
+🔹 PHASE 1.5 — SCRIPT TIMELINES (INCOMPLETE)
+
+Goal: Support time-offset commands authored in INI or HKX annotations.
+
+Responsibilities
+
+FBConfig parses timestamped commands into TimedCommand
+
+FBUpdate instantiates and advances timeline instances
+
+Commands are emitted at the correct runtime offsets
+
+No dependency on animation system internals yet
+
+Checklist
+
+ Extend Snapshot to include TimedCommand
+
+ FBConfig loads timestamped scripts from INI
+
+ FBUpdate creates timeline instances on FBEvent
+
+ Commands fire when elapsed >= time
+
+ Multiple timelines can run concurrently
+
+ No tweening yet (instant execution only)
+
+Checkpoint
+
+A single FBEvent causes multiple commands to fire at different times.
+
+
 PHASE 2 — FBTransform STABILIZATION (IN PROGRESS)
 
 Goal: Make transform system correct, safe, and reusable.
@@ -76,7 +109,7 @@ Goal: Add morph support using the same command pipeline.
 Checkpoint:
 A config event drives a visible morph change.
 
-PHASE 4 — TWEENING (DEFERRED)
+PHASE 4 — TWEENING
 
 Goal: Smooth, time-based transitions.
 
@@ -93,7 +126,7 @@ Goal: Smooth, time-based transitions.
 Checkpoint:
 Transforms/morphs interpolate over time correctly.
 
-PHASE 5 — FBState (FUTURE)
+PHASE 5 — FBState
 
 Goal: Gameplay state manipulation.
 
