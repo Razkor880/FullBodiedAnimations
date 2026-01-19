@@ -90,8 +90,7 @@ INI command rules
 Node Mapping
 
 [x] Stable author-facing node keys are defined (Head, Spine1, LUpperArm, etc.)
-[ ] Node mapper moved to a neutral location such as FBTransform
-[ ] Legacy FB::Scaler naming removed
+[ ] Node mapper moved to a neutral location such as FBTransform or FBStructs
 [ ] Node mapping reused by Transform and Morph systems
 
 Timeline Execution
