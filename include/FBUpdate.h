@@ -1,9 +1,7 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <memory>
-#include <thread>
 
 class FBConfig;
 class FBEvents;
@@ -19,28 +17,23 @@ private:
     FBEvents& _events;
 };
 
-class FBUpdatePump
-{
+class FBUpdatePump {
 public:
     explicit FBUpdatePump(FBUpdate& update);
-    ~FBUpdatePump();
-
-    FBUpdatePump(const FBUpdatePump&) = delete;
-    FBUpdatePump& operator=(const FBUpdatePump&) = delete;
 
     void Start();
     void Stop();
 
-    [[nodiscard]] bool IsRunning() const noexcept { return _running.load(); }
-    void SetTickHz(double hz);
-
 private:
-    void ThreadMain();
-
     FBUpdate& _update;
-
     std::atomic<bool> _running{false};
-    std::thread _thread;
 
-    std::atomic<double> _tickHz{60.0};
+    // Keep your existing threading mechanism in the .cpp.
+    // If you use std::thread or std::jthread, declare it here to match your implementation.
+    // Example (uncomment if you use it):
+    //
+    // std::jthread _thread;
+    //
+    // or:
+    // std::thread _thread;
 };

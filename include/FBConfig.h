@@ -1,27 +1,26 @@
 #pragma once
 
-#include "FBStructs.h"
-
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <memory>
 
-struct TimedCommand
-{
-    float time = 0.0f;
+#include "FBStructs.h"
+
+struct TimedCommand {
+    float time = 0.0f;  // seconds since timeline start
     FBCommand command{};
 };
 
-struct Snapshot
-{
+using TimedCommandList = std::vector<TimedCommand>;
+
+struct Snapshot {
     Generation generation = 0;
-    std::unordered_map<std::string, std::string> eventMap;
-    std::unordered_map<std::string, FBCommandList> scripts;
+    std::unordered_map<std::string, std::string> eventMap;      // eventTag -> scriptName
+    std::unordered_map<std::string, TimedCommandList> scripts;  // scriptName -> timed commands
 };
 
-class FBConfig
-{
+class FBConfig {
 public:
     bool LoadInitial();
     bool Reload();
