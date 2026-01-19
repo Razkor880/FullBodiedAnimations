@@ -1,1 +1,126 @@
+CHECKLIST
+PHASE 0 — FOUNDATION (COMPLETE)
 
+Goal: Plugin boots, runs, and owns its lifecycle.
+
+ Create SKSE plugin (FBPlugin)
+
+ Logging initialized and visible
+
+ FBConfig loads initial snapshot
+
+ Generation system exists and increments
+
+ FBUpdate pump starts and ticks
+
+ Papyrus registration works
+
+ Manual test hooks (test event injection)
+
+Checkpoint:
+Plugin loads, logs generation, update pump ticks.
+
+PHASE 1 — EVENT PIPELINE (COMPLETE)
+
+Goal: Prove end-to-end event → execution.
+
+ FBEvents queue implemented (Push / Drain)
+
+ Events persist until drained
+
+ FBUpdate drains every tick
+
+ Event → script mapping via snapshot
+
+ Command dispatch by type
+
+ Transform command executes visibly in game
+
+Checkpoint:
+A config-defined event causes a visible head scale in game.
+✔ ACHIEVED
+
+PHASE 2 — FBTransform STABILIZATION (IN PROGRESS)
+
+Goal: Make transform system correct, safe, and reusable.
+
+ Clean FBTransform API (ApplyScale, etc.)
+
+ Resolve actor correctly (1P/3P aware)
+
+ Node lookup hardened
+
+ Remove retry/requeue logic (temporary)
+
+ Add reset / absolute vs relative semantics
+
+ Ensure no per-tick reapplication unless intended
+
+Checkpoint:
+Transforms apply reliably to player and NPCs without hacks.
+
+PHASE 3 — FBMorph (NEXT)
+
+Goal: Add morph support using the same command pipeline.
+
+ FBMorph module created
+
+ Morph commands dispatched from FBUpdate
+
+ RaceMenu slider / expression application
+
+ Snapshot-driven, generation-aware
+
+ No dependency on FBTransform internals
+
+Checkpoint:
+A config event drives a visible morph change.
+
+PHASE 4 — TWEENING (DEFERRED)
+
+Goal: Smooth, time-based transitions.
+
+ Shared TweenSpec interpretation
+
+ FBTransform supports tweened scale
+
+ FBMorph supports tweened morph
+
+ Easing types implemented
+
+ Tween state stored outside FBUpdate
+
+Checkpoint:
+Transforms/morphs interpolate over time correctly.
+
+PHASE 5 — FBState (FUTURE)
+
+Goal: Gameplay state manipulation.
+
+ FBState module introduced
+
+ Commands for AI, controls, flags, etc.
+
+ Explicit separation from FBFx
+
+PHASE 6 — TOOLING / OAR (FAR FUTURE)
+
+Goal: Authoring and live editing support.
+
+ Config hot-reload hardened
+
+ Optional OAR UI integration
+
+ Runtime editing without restart (best-effort)
+
+OPERATING RULES (RE-CANONIZED)
+
+No feature advances without checklist update
+
+Stabilize before extending
+
+Prefer clarity over cleverness
+
+Old project files are reference only
+
+If something works, identify why before abstracting it
