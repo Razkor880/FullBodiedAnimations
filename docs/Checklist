@@ -3,19 +3,19 @@ PHASE 0 — FOUNDATION (COMPLETE)
 
 Goal: Plugin boots, runs, and owns its lifecycle.
 
- Create SKSE plugin (FBPlugin)
+ [X] Create SKSE plugin (FBPlugin)
 
- Logging initialized and visible
+ [X] Logging initialized and visible
 
- FBConfig loads initial snapshot
+ [X] FBConfig loads initial snapshot
 
- Generation system exists and increments
+ [X] Generation system exists and increments
 
- FBUpdate pump starts and ticks
+ [X] FBUpdate pump starts and ticks
 
- Papyrus registration works
+ [X] Papyrus registration works
 
- Manual test hooks (test event injection)
+ [X] Manual test hooks (test event injection)
 
 Checkpoint:
 Plugin loads, logs generation, update pump ticks.
@@ -24,17 +24,17 @@ PHASE 1 — EVENT PIPELINE (COMPLETE)
 
 Goal: Prove end-to-end event → execution.
 
- FBEvents queue implemented (Push / Drain)
+ [X] FBEvents queue implemented (Push / Drain)
 
- Events persist until drained
+ [X] Events persist until drained
 
- FBUpdate drains every tick
+ [X] FBUpdate drains every tick
 
- Event → script mapping via snapshot
+ [X] Event → script mapping via snapshot
 
- Command dispatch by type
+ [X] Command dispatch by type
 
- Transform command executes visibly in game
+[X] Transform command executes visibly in game
 
 Checkpoint:
 A config-defined event causes a visible head scale in game.
@@ -56,21 +56,21 @@ No dependency on animation system internals yet
 
 Checklist
 
- Extend Snapshot to include TimedCommand
+[] Extend Snapshot to include TimedCommand
 
- FBConfig loads timestamped scripts from INI
+[] FBConfig loads timestamped scripts from INI
 
- FBUpdate creates timeline instances on FBEvent
+[] FBUpdate creates timeline instances on FBEvent
 
- Commands fire when elapsed >= time
+[] Commands fire when elapsed >= time
 
- Multiple timelines can run concurrently
+[] Multiple timelines can run concurrently
 
- No tweening yet (instant execution only)
+[] No tweening yet (instant execution only)
 
 Checkpoint
 
-A single FBEvent causes multiple commands to fire at different times.
+A single FBEvent causes multiple commands to fire at different times. All commands executed are described in the INI and are not hardwired into the script. 
 
 
 PHASE 2 — FBTransform STABILIZATION (IN PROGRESS)
