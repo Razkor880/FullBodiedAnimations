@@ -52,53 +52,64 @@ Exit condition:
 A test FB event successfully flows through the system and reaches execution.
 
 PHASE 2 – TIMELINES AND SCRIPTING (IN PROGRESS)
+(aka “Phase 1.5 — Script Timelines” in assignment notes)
 
 Goal: Introduce author-driven timelines without changing the execution backbone.
 
-Timeline Data Model
-
+Timeline Data Model (DATA SHAPES ONLY)
 [x] TimedCommand defined as time plus FBCommand
 [x] FBCommand remains execution-level with no timing data
-[x] Snapshot stores eventMap mapping event tags to script keys
-[x] Snapshot stores scripts mapping script keys to TimedCommand lists
+[x] Snapshot contains an eventMap-like concept (event tag -> script key)
+[x] Snapshot contains a scripts-like concept (script key -> TimedCommand list)
 
-INI Parsing
+Reality note:
 
+Snapshot/eventMap/scripts currently exist and are usable, but are filled via hardcoded test data (not INI yet).
+
+FBUpdate currently does not schedule; it executes all commands immediately.
+
+INI Parsing (NOT IMPLEMENTED YET)
 File layout rules
+[ ] One global FullBodiedIni.ini in the mod root for debug and global settings
+[ ] One FB_.ini per animation
+[ ] Per-animation INI lives in the same folder as its HKX
+[ ] Open Animation Replacer variant folders are supported
+[ ] Multiple HKX files can exist in a variants folder
+[ ] Each HKX has its own corresponding FB_*.ini
+[ ] Hardcoded root path supported as an initial milestone (before auto-discovery)
 
-[x] One global FullBodiedIni.ini in the mod root for debug and global settings
-[x] One FB_<hkxname>.ini per animation
-[x] Per-animation INI lives in the same folder as its HKX
-[x] Open Animation Replacer variant folders are supported
-[x] Multiple HKX files can exist in a variants<baseclip> folder
-[x] Each HKX has its own corresponding FB_*.ini
-
-INI command rules
-
+INI command rules (NOT IMPLEMENTED YET)
 [ ] Sections identify animation and role (Caster or Target)
 [ ] Each command line begins with a timestamp
 [ ] Commands without a prefix target the Caster
 [ ] Commands prefixed with 2_ target the Target
-[ ] Parsing produces FBCommand objects only
+[ ] Parsing produces FBCommand objects only (no timing logic in FBCommand)
 [ ] No execution occurs during parsing
 
-Node Mapping
-
-[x] Stable author-facing node keys are defined (Head, Spine1, LUpperArm, etc.)
-[ ] Node mapper implemented in a neutral location (FBStructs or FBTransform)
+Node Mapping (PARTIAL)
+[x] Stable author-facing node keys exist somewhere in-code (current node library)
+[ ] Node mapper lives in a neutral shared location (FBStructs or FBTransform)
 [ ] Existing node lists from the old project are used as reference only
-[ ] Node mapping reused by Transform and Morph systems
+[ ] Node mapping reused by Transform and Morph systems (single source of truth)
 
-Timeline Execution
-
-[ ] Track elapsed time since animation start
+Timeline Execution (NOT IMPLEMENTED YET)
+[ ] Track elapsed time since animation start (per active timeline instance)
 [ ] Execute TimedCommands when their timestamp is reached
 [ ] Ensure commands execute only once
-[ ] Support multiple overlapping timelines for caster and target
+[ ] Support multiple overlapping timelines (at minimum: multiple actors)
+[ ] Support paired roles (Caster and Target) as separate timelines
 [ ] Keep execution logic entirely inside FBUpdate
+[ ] FBConfig does parsing only; FBUpdate does execution only (no text parsing in tick)
+
+CURRENT CODE REALITY CHECK (helps avoid regressions)
+[x] A test FB event can flow through the system and reach execution
+[x] Commands can execute on valid 3D actors
+[x] Scale operations can be executed as a command (known-working executor path)
+[ ] Timeline scheduling based on time does NOT exist yet (everything fires immediately)
+[ ] INI parsing does NOT exist yet (hardcoded Snapshot content only)
 
 Exit condition:
-INI-defined timelines execute at the correct times during animation playback.
+INI-defined timelines execute at the correct times during animation playback (with correct role targeting), without changing the existing backbone modules.
 
 PHASE 3 – FBTRANSFORM BUILD-OUT (PLANNED)
 
