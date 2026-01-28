@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "FBStructs.h"
+#include "FBActors.h"
 
 struct TimedCommand {
     float time = 0.0f;  // seconds since timeline start
