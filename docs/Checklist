@@ -71,11 +71,11 @@ FBUpdate currently does not schedule; it executes all commands immediately.
 INI Parsing (NOT IMPLEMENTED YET)
 File layout rules
 [x] One global FullBodiedIni.ini in the mod root for debug and global settings
-[ ] One FB_.ini per animation
-[ ] Per-animation INI lives in the same folder as its HKX
-[ ] Open Animation Replacer variant folders are supported
-[ ] Multiple HKX files can exist in a variants folder
-[ ] Each HKX has its own corresponding FB_*.ini
+[x] One FB_.ini per animation
+[x] Per-animation INI lives in the same folder as its HKX
+[x] Open Animation Replacer variant folders are supported
+[x] Multiple HKX files can exist in a variants folder
+[x] Each HKX has its own corresponding FB_*.ini
 [x] Hardcoded root path supported as an initial milestone (before auto-discovery)
 
 INI command rules (NOT IMPLEMENTED YET)
