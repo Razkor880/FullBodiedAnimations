@@ -1,6 +1,6 @@
-Scriptname FB_ConsoleHelper hidden
+Scriptname FB_ConsoleHelper  Hidden 
 
 Function Drain() global
 	Debug.Trace("[FB] ConsoleHelper calling DrainEvents")
-	FullBodied.DrainEvents()
+	FullBodiedQuestScript.DrainEvents()
 EndFunction
