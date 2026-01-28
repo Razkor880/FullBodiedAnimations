@@ -7,6 +7,9 @@
 
 #include <string>
 
+
+
+
 bool FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale)
 {
     if (!actor) {
@@ -30,14 +33,14 @@ bool FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float 
     // Use a handle so the actor can be safely resolved later.
     const RE::ActorHandle handle = actor->CreateRefHandle();
 
-    auto* task = SKSE::GetTaskInterface();
-    if (!task) {
+
+    auto* taskInterface = SKSE::GetTaskInterface();
+    if (!taskInterface) {
         spdlog::error("[FB] Transform.ApplyScale: SKSE task interface is null");
         return false;
     }
 
-    // Queue the actual scene graph edit to the game thread.
-    task->AddTask([handle, nodeStr = std::move(nodeStr), scale]() mutable {
+    taskInterface->AddTask([handle, nodeStr, scale]() mutable {
         auto aPtr = handle.get();
         RE::Actor* a = aPtr.get();
         if (!a) {
@@ -45,21 +48,12 @@ bool FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float 
             return;
         }
 
-        // The "old working" approach: ask for the actor's 3D at execution time.
-        // This tends to be more reliable than gating earlier.
         auto* root = a->Get3D1(false);
         if (!root) {
-            root = a->Get3D1(true);
-        }
-
-        if (!root) {
-            root = a->Get3D2();
-        }
-
-        if (!root) {
-            spdlog::info("[FB] Transform.ApplyScale(task): actor 0x{:08X} has no 3D roots (3P/1P/2)", a->formID);
+            spdlog::info("[FB] Transform.ApplyScale(task): actor 0x{:08X} has no 3P 3D root", a->formID);
             return;
         }
+
 
         const RE::BSFixedString bsName(nodeStr.c_str());
         auto* obj = root->GetObjectByName(bsName);
@@ -67,17 +61,16 @@ bool FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float 
             spdlog::info("[FB] Transform.ApplyScale(task): node '{}' not found on actor 0x{:08X}", nodeStr, a->formID);
             return;
         }
-
         obj->local.scale = scale;
 
-        // Intentionally not calling UpdateWorldData here:
-        // - In your CommonLib build UpdateWorldData() requires params
-        // - The engine typically refreshes transforms naturally
-        // If we still need an explicit refresh later, we’ll add it after confirming the correct signature.
+        //RE::NiUpdateData updateData{};
+        //obj->UpdateWorldData(&updateData);
+
         spdlog::info("[FB] Transform.ApplyScale(task): actor 0x{:08X} node='{}' scale={}", a->formID, nodeStr, scale);
     });
 
-    // We queued the task successfully.
     spdlog::info("[FB] Transform.ApplyScale: queued actor=0x{:08X} node='{}' scale={}", actor->formID, nodeName, scale);
     return true;
+
+
 }

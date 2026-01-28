@@ -1,4 +1,5 @@
 #include "FBUpdate.h"
+#include "FBPlugin.h"
 
 #include <RE/Skyrim.h>
 #include <spdlog/spdlog.h>
@@ -30,7 +31,13 @@ void FBUpdatePump::Start() {
             const std::chrono::duration<float> dt = now - last;
             last = now;
 
-            _update.Tick(dt.count());
+            if (auto* task = SKSE::GetTaskInterface(); task) {
+                const float dtSeconds = dt.count();
+                task->AddTask([this, dtSeconds]() { _update.Tick(dtSeconds); });
+            }
+
+
+
 
             // Minimal throttle ~60Hz.
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -71,6 +78,16 @@ static RE::Actor* ResolveActorForEvent(const FBEvent& e, ActorRole /*role*/) {
     return form->As<RE::Actor>();
 }
 
+struct PendingTransform {
+    FBCommand cmd;
+    FBEvent ctx;
+    float nextAttempt = 0.0f;
+    std::uint8_t tries = 0;
+};
+
+static std::vector<PendingTransform> g_pendingTransforms;
+static float g_timeSeconds = 0.0f;  // advance with dt in your update pump
+
 static bool ExecuteTransformCommand(const FBCommand& cmd, const FBEvent& ctxEvent) {
     float scale = 1.0f;
     if (!TryParseFloat(cmd.args, scale)) {
@@ -86,8 +103,45 @@ static bool ExecuteTransformCommand(const FBCommand& cmd, const FBEvent& ctxEven
     }
 
     spdlog::info("[FB] Exec: Scale actor=0x{:08X} node='{}' scale={}", actor->formID, cmd.target, scale);
-    return FBTransform::ApplyScale(actor, cmd.target, scale);
+
+    if (FBTransform::ApplyScale(actor, cmd.target, scale)) {
+        return true;
+
+    }
+
+    // Not ready (likely no 3D yet). Retry later.
+    PendingTransform pending;
+    pending.cmd = cmd;
+    pending.ctx = ctxEvent;
+    pending.nextAttempt = g_timeSeconds + 0.1f;  // 100ms spacing
+    pending.tries = 1;
+    g_pendingTransforms.push_back(std::move(pending));
+
+    spdlog::info("[FB] Transform: queued retry actor=0x{:08X} node='{}' tries={}", actor->formID, cmd.target, 1);
+    return false;
+
+    for (std::size_t i = 0; i < g_pendingTransforms.size();) {
+        auto& p = g_pendingTransforms[i];
+        if (g_timeSeconds < p.nextAttempt) {
+            ++i;
+            continue;
+        }
+
+        const bool ok = FBTransform::ApplyScale(actor, cmd.target, scale);
+        if (!ok) {
+            spdlog::info("[FB] Exec: Scale failed (will not apply) actor=0x{:08X} node='{}'", actor->formID,
+                         cmd.target);
+        }
+        return ok;
+
+
+        // If ExecuteTransformCommand re-queued again, we should remove this one to avoid duplicates.
+        // Easiest: handle retries here directly instead of calling ExecuteTransformCommand.
+        // So: replace the above "ok = ExecuteTransformCommand" with inline attempt (I can provide if you want).
+        ++i;
+    }
 }
+
 
 void FBUpdate::Tick(float dtSeconds) {
     const auto snap = _config.GetSnapshot();
@@ -95,6 +149,7 @@ void FBUpdate::Tick(float dtSeconds) {
         spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
         return;
     }
+    g_timeSeconds += dtSeconds;
 
     auto events = _events.Drain();
 
@@ -115,6 +170,9 @@ void FBUpdate::Tick(float dtSeconds) {
         }
 
         const auto& scriptName = mapIt->second;
+
+
+        
 
         const auto scriptIt = snap->scripts.find(scriptName);
         if (scriptIt == snap->scripts.end()) {

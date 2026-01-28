@@ -6,11 +6,14 @@
 #include <memory>
 #include <utility>
 
+#include "FBPlugin.h"
 #include "FBConfig.h"
 #include "FBEvents.h"
+#include "FBActors.h"
 #include "FBUpdate.h"
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
+
 
 static FBConfig g_config;
 static FBEvents g_events;
@@ -64,9 +67,9 @@ namespace {
         }
 
         return papyrus->Register([](RE::BSScript::IVirtualMachine* vm) {
-            vm->RegisterFunction("ReloadConfig", "FullBodied", Papyrus_ReloadConfig);
-            vm->RegisterFunction("DrainEvents", "FullBodied", Papyrus_DrainEvents);
-            vm->RegisterFunction("TickOnce", "FullBodied", Papyrus_TickOnce);
+            vm->RegisterFunction("ReloadConfig", "FullBodiedQuestScript", Papyrus_ReloadConfig);
+            vm->RegisterFunction("DrainEvents", "FullBodiedQuestScript", Papyrus_DrainEvents);
+            vm->RegisterFunction("TickOnce", "FullBodiedQuestScript", Papyrus_TickOnce);
             return true;
         });
     }
@@ -122,28 +125,33 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
             if (!RegisterPapyrus()) {
                 spdlog::error("[FB] Papyrus Registration failed");
             } else {
-                spdlog::info("[FB] Papyrus registered: FullBodied.ReloadConfig()");
+                spdlog::info("[FB] Papyrus registered: FullBodiedQuestScript.ReloadConfig()");
             }
-            return;
+
+            g_events.OnDataLoaded();  // new
         }
 
-        // Fire once per session after you are actually in-game
         if (msg->type == SKSE::MessagingInterface::kPostLoadGame || msg->type == SKSE::MessagingInterface::kNewGame) {
-            static bool s_pushedTestEvent = false;
-            if (s_pushedTestEvent) {
-                return;
-            }
-
-            FBEvent e{};
-            e.tag = "FB_TestEvent";
-            e.actor.formID = 0x00000014;
-
-            g_events.Push(e);
-            spdlog::info("[FB] Queued test event (in-game): tag='{}' actorFormID=0x{:08X}", e.tag, e.actor.formID);
-
-            s_pushedTestEvent = true;
-            return;
+            g_events.OnPostLoadOrNewGame();  // new
         }
+
+
+            
+        //    static bool s_pushedTestEvent = false;
+        //    if (s_pushedTestEvent) {
+        //        return;
+        //    }
+
+        //    FBEvent e{};
+        //    e.tag = "FB_TestEvent";
+        //    e.actor.formID = 0x00000014;
+
+        //    g_events.Push(e);
+        //    spdlog::info("[FB] Queued test event (in-game): tag='{}' actorFormID=0x{:08X}", e.tag, e.actor.formID);
+
+        //    s_pushedTestEvent = true;
+        //    return;
+        //}
     });
 
     return true;
