@@ -81,10 +81,10 @@ File layout rules
 INI command rules (NOT IMPLEMENTED YET)
 [x] Sections identify animation and role (Caster or Target)
 [x] Each command line begins with a timestamp
-[ ] Commands without a prefix target the Caster
-[ ] Commands prefixed with 2_ target the Target
-[ ] Parsing produces FBCommand objects only (no timing logic in FBCommand)
-[ ] No execution occurs during parsing
+[x] Commands without a prefix target the Caster
+[x] Commands prefixed with 2_ target the Target
+[x] Parsing produces FBCommand objects only (no timing logic in FBCommand)
+[x] No execution occurs during parsing
 
 Node Mapping (PARTIAL)
 [x] Stable author-facing node keys exist somewhere in-code (current node library)
@@ -97,7 +97,7 @@ Timeline Execution (NOT IMPLEMENTED YET)
 [ ] Execute TimedCommands when their timestamp is reached
 [ ] Ensure commands execute only once
 [ ] Support multiple overlapping timelines (at minimum: multiple actors)
-[ ] Support paired roles (Caster and Target) as separate timelines
+[x] Support paired roles (Caster and Target) as separate timelines
 [ ] Keep execution logic entirely inside FBUpdate
 [ ] FBConfig does parsing only; FBUpdate does execution only (no text parsing in tick)
 
