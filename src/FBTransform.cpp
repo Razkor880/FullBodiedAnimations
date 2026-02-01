@@ -1,8 +1,9 @@
 #include "FBTransform.h"
+#include "FBTransform.h"
+
 
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
-
 #include <spdlog/spdlog.h>
 
 #include <string>
@@ -73,4 +74,24 @@ bool FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float 
     return true;
 
 
+}
+
+bool FBTransform::TryGetScale(RE::Actor* actor, std::string_view nodeName, float& outScale) {
+    if (!actor || nodeName.empty()) {
+        return false;
+    }
+
+    auto* root = actor->Get3D1(false);
+    if (!root) {
+        return false;
+    }
+
+    const RE::BSFixedString bsName(std::string(nodeName).c_str());
+    auto* obj = root->GetObjectByName(bsName);
+    if (!obj) {
+        return false;
+    }
+
+    outScale = obj->local.scale;
+    return true;
 }

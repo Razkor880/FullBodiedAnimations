@@ -11,6 +11,7 @@
 #include "FBEvents.h"
 #include "FBActors.h"
 #include "FBUpdate.h"
+#include "FBUpdatePump.h"
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
 

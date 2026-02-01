@@ -69,6 +69,8 @@ void FBEvents::TryRegisterToPlayer() {
     if (attached) {
         if (!_registered.exchange(true)) {
             spdlog::info("[FB] AnimEvt: registered sinks to player graphs");
+            spdlog::info("[FB] AnimEvt: ready (logAllTags={})", _logAllAnimTags.load());
+
         }
     } else {
         spdlog::warn("[FB] AnimEvt: no graphs on player manager");
@@ -79,13 +81,17 @@ void FBEvents::TryRegisterToPlayer() {
 void FBEvents::HandleAnimEvent(const RE::BSAnimationGraphEvent& evn) {
     _sawAnyEvent.store(true);
 
-    // Try to resolve actor robustly
     const RE::Actor* actor = nullptr;
-
     if (auto* holder = evn.holder) {
         actor = holder->As<RE::Actor>();
     }
 
+    if (!actor) {
+        if (_logAllAnimTags.load()) {
+            spdlog::info("[FB] AnimEvt: tag='{}' actor=<null>", evn.tag.c_str());
+        }
+        return;
+    }
 
     if (_logAllAnimTags.load()) {
         spdlog::info("[FB] AnimEvt: tag='{}' actor=0x{:08X}", evn.tag.c_str(), actor->formID);
@@ -95,12 +101,18 @@ void FBEvents::HandleAnimEvent(const RE::BSAnimationGraphEvent& evn) {
         FBEvent e{};
         e.tag = "FBEvent";
         e.actor.formID = actor->formID;
-
         Push(e);
-
-        spdlog::info("[FB] AnimEvt: FBEvent -> queued (actor=0x{:08X})", actor->formID);
+        spdlog::info("[FB] AnimEvt: queued FBEvent for actor=0x{:08X}", e.actor.formID);
+    } else if (evn.tag == "PairEnd") {
+        FBEvent e{};
+        e.tag = "PairEnd";
+        e.actor.formID = actor->formID;
+        Push(e);
+        spdlog::info("[FB] AnimEvt: queued PairEnd for actor=0x{:08X}", e.actor.formID);
     }
 }
+
+
 
 void FBEvents::Push(const FBEvent& event) 
 {

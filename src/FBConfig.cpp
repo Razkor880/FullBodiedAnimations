@@ -1,5 +1,5 @@
 #include "FBConfig.h"
-#include "FBActors.h"
+
 
 #include <memory>
 #include <fstream>
@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 namespace {
     std::shared_ptr<const Snapshot> g_snapshot;
@@ -118,6 +119,9 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             if (IEquals(key, "EnableTimelines")) {
                 enableTimelines = (val == "true" || val == "1" || val == "True");
             }
+            if (IEquals(key, "ResetOnPairEnd")) {
+                out.ResetOnPairEnd = (val == "true" || val == "1" || IEquals(val, "true"));
+            }
         } else if (IEquals(currentSection, "FBFiles")) {
             if (!key.empty() && !val.empty()) {
                 fbFiles[key] = val;
@@ -128,7 +132,7 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                 out.eventMap[key] = val;
             }
         }
-        spdlog::info("[FB] INI: section='{}'", currentSection);
+        //spdlog::info("[FB] INI: section='{}'", currentSection);
 
     }
 
@@ -145,7 +149,7 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
     // If FBEvent isn't mapped and there is exactly one FBFiles entry, default it.
     if (out.eventMap.find("FBEvent") == out.eventMap.end() && fbFiles.size() == 1) {
         const auto& only = *fbFiles.begin();
-        out.eventMap["NPCKillMoveStart"] = only.second;  // + ".hkx";
+        out.eventMap["FBEvent"] = only.second;  // + ".hkx";
     }
 
     // TEMP: keep your harness working without changing other files yet
@@ -182,10 +186,13 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             spdlog::warn("[FB] INI: missing per-anim ini: {}", animIni.string());
             continue;
         }
+        
 
         // Parse per-anim ini
         std::string wantCaster = "FB:" + clip + "|Caster";
         std::string wantTarget = "FB:" + clip + "|Target";
+        spdlog::info("[FB] INI: using per-anim ini: {}", animIni.string());
+        spdlog::info("[FB] INI: want sections: [{}] and [{}]", wantCaster, wantTarget);
         enum class Sec { None, Caster, Target };
         Sec sec = Sec::None;
 
@@ -198,57 +205,97 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             if (l2.front() == '[' && l2.back() == ']') {
                 std::string sect = l2.substr(1, l2.size() - 2);
                 TrimInPlace(sect);
-                if (sect == wantCaster)
+                if (sect == wantCaster) {
+                    spdlog::info("[FB] INI: entered Caster section ({})", sect);
                     sec = Sec::Caster;
-                else if (sect == wantTarget)
+                } else if (sect == wantTarget) {
+                    spdlog::info("[FB] INI: entered Target section ({})", sect);
                     sec = Sec::Target;
-                else
+                } else {
                     sec = Sec::None;
+                }
                 continue;
+
             }
 
             if (sec == Sec::None) continue;
 
             std::istringstream iss(l2);
-            std::string timeTok, cmdTok;
-            if (!(iss >> timeTok >> cmdTok)) continue;
+            std::string timeTok;
+            if (!(iss >> timeTok)) continue;
 
             auto t = ParseFloat(timeTok);
+
+            std::string cmdStr;
+            std::getline(iss, cmdStr);
+            TrimInPlace(cmdStr);
+
+            if (cmdStr.empty()) continue;
+
             if (!t) continue;
 
-            // Support FBScale_Head(0.1) and 2_FBScale_Head(0.1)
-            // Ignore 2_ prefix here because role comes from section.
-            if (cmdTok.rfind("2_", 0) == 0) cmdTok = cmdTok.substr(2);
+            ActorRole role = (sec == Sec::Caster) ? ActorRole::Caster : ActorRole::Target;
 
-            if (cmdTok.rfind("FBScale_", 0) != 0) {
-                // Phase 2: ignore unknown ops
+            bool targetOverride = false;
+            if (cmdStr.rfind("2_", 0) == 0) {
+                targetOverride = true;
+                cmdStr = cmdStr.substr(2);
+                TrimInPlace(cmdStr);
+            }
+
+            if (sec == Sec::Caster && targetOverride) {
+                role = ActorRole::Target;
+            }
+
+            auto open = cmdStr.find('(');
+            auto close = cmdStr.rfind(')');
+            if (open == std::string::npos || close == std::string::npos || close <= open) {
                 continue;
             }
 
-            // Extract nodeKey and value: FBScale_Head(0.1)
-            auto open = cmdTok.find('(');
-            auto close = cmdTok.rfind(')');
-            if (open == std::string::npos || close == std::string::npos || close <= open) continue;
+            std::string opAndNode = cmdStr.substr(0, open);
+            TrimInPlace(opAndNode);
 
-            std::string opAndNode = cmdTok.substr(0, open);  // FBScale_Head
-            std::string argStr = cmdTok.substr(open + 1, close - open - 1);
+            std::string argStr = cmdStr.substr(open + 1, close - open - 1);
+            TrimInPlace(argStr);
+
+
+
+
+
+            if (opAndNode.rfind("FBScale_", 0) != 0) {
+                continue;
+            }
 
             std::string nodeKey = opAndNode.substr(std::string("FBScale_").size());
+            TrimInPlace(nodeKey);
+
+
+
+
+
             std::string niNode = NodeKeyToNiNode(nodeKey);
 
             FBCommand cmd{};
             cmd.type = FBCommandType::Transform;
-            cmd.role = (sec == Sec::Caster) ? ActorRole::Caster : ActorRole::Target;  // if these enum values exist
+            cmd.role = role;
             cmd.generation = out.generation;
             cmd.opcode = "Scale";
             cmd.target = niNode;
             cmd.args = argStr;
+
 
             TimedCommand tc{};
             tc.time = *t;
             tc.command = std::move(cmd);
 
             out.scripts[scriptKey].push_back(std::move(tc));
+
+            spdlog::info("[FB] INI: added cmd t={} role={} op='{}' target='{}' args='{}'", tc.time,
+                         (tc.command.role == ActorRole::Caster ? "Caster" : "Target"), tc.command.opcode,
+                         tc.command.target, tc.command.args);
+
+
         }
 
         // Sort script by time
@@ -268,14 +315,27 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
     return true;
 }
 
+static bool TryParseFloat(std::string_view s, float& out) {
+    if (auto pos = s.find('='); pos != std::string_view::npos) {
+        s = s.substr(pos + 1);
+    }
+
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
+
+    std::string tmp(s);
+    char* end = nullptr;
+    out = std::strtof(tmp.c_str(), &end);
+    return end != tmp.c_str();
+}
+
+
 bool FBConfig::LoadInitial() {
     auto snapshot = std::make_shared<Snapshot>();
     snapshot->generation = 1;
 
     snapshot->eventMap.clear();
     snapshot->scripts.clear();
-
-    BuildSnapshotFromIni(*snapshot);
 
     if (!BuildSnapshotFromIni(*snapshot)) {
         spdlog::error("[FB] Config: INI parse failed; no fallback will run");
@@ -290,22 +350,21 @@ bool FBConfig::LoadInitial() {
 
 
 bool FBConfig::Reload() {
-    if (!g_snapshot) {
+    auto old = g_snapshot;
+    auto snapshot = std::make_shared<Snapshot>();
+    snapshot->generation = old ? (old->generation + 1) : 1;
+    snapshot->eventMap.clear();
+    snapshot->scripts.clear();
+
+    if (!BuildSnapshotFromIni(*snapshot)) {
+        spdlog::error("[FB] Config: Reload parse failed; keeping old snapshot");
         return false;
     }
 
-    // Minimal: generation bump, future parsing will rebuild maps/scripts.
-    auto snapshot = std::make_shared<Snapshot>(*g_snapshot);
-    snapshot->generation = g_snapshot->generation + 1;
-
-    // TODO: reload/parse INI and rebuild snapshot->eventMap and snapshot->scripts
-
-    snapshot->eventMap.clear();
-    snapshot->scripts.clear();
-    //BuildSnapshotFromIni(*snapshot);
-
+    g_snapshot = std::move(snapshot);
     return true;
 }
+
 
 Generation FBConfig::GetGeneration() const { return g_snapshot ? g_snapshot->generation : 0; }
 
