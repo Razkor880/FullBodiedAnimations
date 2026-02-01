@@ -3,10 +3,10 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-
-
+#include <unordered_map>
 
 using Generation = std::uint64_t;
+
 
 enum class Easing : std::uint8_t 
 {
@@ -76,4 +76,25 @@ struct FBCommand
     }
 };
 
+
+
+struct ActiveTimeline
+{
+    FBEvent event;
+    std::string scriptKey;
+    float elapsed = 0.0f;
+    std::size_t nextIndex = 0;
+    std::uint64_t generation = 0;
+    std::unordered_map<std::string, float> originalScale;
+    bool commandsComplete = false;
+    float startTimeSeconds = 0.0f;
+};
+
 using FBCommandList = std::vector<FBCommand>;
+
+struct TimedCommand {
+    float time = 0.0f;  // seconds since timeline start
+    FBCommand command{};
+};
+
+using TimedCommandList = std::vector<TimedCommand>;

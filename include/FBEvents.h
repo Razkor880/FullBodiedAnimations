@@ -36,6 +36,6 @@ private:
 
     std::atomic_bool _registered{false};
     std::atomic_bool _sawAnyEvent{false};
-    std::atomic_bool _logAllAnimTags{true};
+    std::atomic_bool _logAllAnimTags{false};
 };
 

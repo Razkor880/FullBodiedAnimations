@@ -6,8 +6,7 @@ namespace RE {
     class Actor;
 }
 
-class FBTransform
-{
-public:
-    static bool ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale);
-};
+namespace FBTransform {
+    bool ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale);
+    bool TryGetScale(RE::Actor* actor, std::string_view nodeName, float& outScale);
+}

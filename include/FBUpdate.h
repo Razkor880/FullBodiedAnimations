@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include "FBStructs.h"
 
 class FBConfig;
 class FBEvents;
@@ -12,28 +13,14 @@ public:
 
     void Tick(float dtSeconds);
 
+    std::vector<ActiveTimeline> _activeTimelines;
+    
+
 private:
     FBConfig& _config;
     FBEvents& _events;
+    float _timeSeconds{0.0f};
 };
 
-class FBUpdatePump {
-public:
-    explicit FBUpdatePump(FBUpdate& update);
 
-    void Start();
-    void Stop();
 
-private:
-    FBUpdate& _update;
-    std::atomic<bool> _running{false};
-
-    // Keep your existing threading mechanism in the .cpp.
-    // If you use std::thread or std::jthread, declare it here to match your implementation.
-    // Example (uncomment if you use it):
-    //
-    // std::jthread _thread;
-    //
-    // or:
-    // std::thread _thread;
-};
