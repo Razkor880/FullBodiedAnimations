@@ -1,12 +1,7 @@
-#pragma once
+class FBTransform {
+public:
+    static void ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale);
+    static void ApplyScale_MainThread(RE::Actor* actor, std::string_view nodeName, float scale);
 
-#include <string_view>
-
-namespace RE {
-    class Actor;
-}
-
-namespace FBTransform {
-    bool ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale);
-    bool TryGetScale(RE::Actor* actor, std::string_view nodeName, float& outScale);
-}
+    static bool TryGetScale(RE::Actor* actor, std::string_view nodeName, float& outScale);
+};

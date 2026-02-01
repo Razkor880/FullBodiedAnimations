@@ -14,7 +14,8 @@ public:
     void Tick(float dtSeconds);
 
     std::vector<ActiveTimeline> _activeTimelines;
-    
+    Generation _lastSeenGeneration = 0;
+
 
 private:
     FBConfig& _config;

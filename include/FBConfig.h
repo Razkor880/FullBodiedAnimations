@@ -8,12 +8,6 @@
 #include "FBStructs.h"
 #include "FBActors.h"
 
-//struct TimedCommand {
-//    float time = 0.0f;  // seconds since timeline start
-//    FBCommand command{};
-//};
-
-
 struct Snapshot {
     Generation generation = 0;
     bool ResetOnPairEnd = false;
@@ -23,11 +17,15 @@ struct Snapshot {
 };
 
 
+
 class FBConfig {
 public:
     bool LoadInitial();
     bool Reload();
 
-    Generation GetGeneration() const;
+    Generation GetGeneration() const {
+        auto snap = GetSnapshot();
+        return snap ? snap->generation : 0;
+    }
     std::shared_ptr<const Snapshot> GetSnapshot() const;
 };
