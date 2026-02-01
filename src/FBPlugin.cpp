@@ -14,6 +14,7 @@
 #include "FBUpdatePump.h"
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
+#include "FBHotkeys.h"
 
 
 static FBConfig g_config;
@@ -45,18 +46,18 @@ namespace {
     }
 
     bool Papyrus_ReloadConfig(RE::StaticFunctionTag*) {
-        if (!g_config_ptr) {
-            spdlog::error("[FB] ReloadConfig called but config ptr is null");
+        spdlog::info("[FB] Papyrus: ReloadConfig() called");
+
+        const bool ok = g_config.Reload();
+        if (!ok) {
+            spdlog::warn("[FB] Papyrus: ReloadConfig failed; keeping existing snapshot");
             return false;
         }
 
-        const auto before = g_config_ptr->GetGeneration();
-        const bool ok = g_config_ptr->Reload();
-        const auto after = g_config_ptr->GetGeneration();
-
-        spdlog::info("[FB] ReloadConfig: ok={} gen {} -> {}", ok, before, after);
-        return ok;
+        spdlog::info("[FB] Papyrus: ReloadConfig ok; gen={}", g_config.GetGeneration());
+        return true;
     }
+
 
     bool RegisterPapyrus() {
         g_config_ptr = std::addressof(g_config);
@@ -74,6 +75,21 @@ namespace {
             return true;
         });
     }
+
+    //bool Papyrus_ReloadConfig(RE::StaticFunctionTag*) {
+    //    spdlog::info("[FB] Papyrus: ReloadConfig() called");
+
+    //    const bool ok = g_config.Reload();  // <-- this must exist
+    //    if (!ok) {
+    //        spdlog::warn("[FB] Papyrus: ReloadConfig failed (keeping existing snapshot)");
+     //       return false;
+    //    }
+
+        // If you have GetGeneration(), log it. Otherwise log snapshot->generation after reload.
+    //    spdlog::info("[FB] Papyrus: ReloadConfig ok; gen={}", g_config.GetGeneration());
+   //     return true;
+   // }
+
 
     std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*) {
         auto drained = g_events.Drain();
@@ -127,32 +143,22 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
                 spdlog::error("[FB] Papyrus Registration failed");
             } else {
                 spdlog::info("[FB] Papyrus registered: FullBodiedQuestScript.ReloadConfig()");
+                g_config.Reload();
             }
+            FBHotkeys::Install([]() {
+                const bool ok = g_config.Reload();
+                spdlog::info("[FB] Hotkey: Reload result={} gen={}", ok, g_config.GetGeneration());
+            });
+
 
             g_events.OnDataLoaded();  // new
         }
 
         if (msg->type == SKSE::MessagingInterface::kPostLoadGame || msg->type == SKSE::MessagingInterface::kNewGame) {
+          
             g_events.OnPostLoadOrNewGame();  // new
         }
 
-
-            
-        //    static bool s_pushedTestEvent = false;
-        //    if (s_pushedTestEvent) {
-        //        return;
-        //    }
-
-        //    FBEvent e{};
-        //    e.tag = "FB_TestEvent";
-        //    e.actor.formID = 0x00000014;
-
-        //    g_events.Push(e);
-        //    spdlog::info("[FB] Queued test event (in-game): tag='{}' actorFormID=0x{:08X}", e.tag, e.actor.formID);
-
-        //    s_pushedTestEvent = true;
-        //    return;
-        //}
     });
 
     return true;

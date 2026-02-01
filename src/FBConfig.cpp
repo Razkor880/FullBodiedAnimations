@@ -350,22 +350,25 @@ bool FBConfig::LoadInitial() {
 
 
 bool FBConfig::Reload() {
-    auto old = g_snapshot;
-    auto snapshot = std::make_shared<Snapshot>();
-    snapshot->generation = old ? (old->generation + 1) : 1;
-    snapshot->eventMap.clear();
-    snapshot->scripts.clear();
+    auto next = std::make_shared<Snapshot>();
+    next->generation = GetGeneration() + 1;
 
-    if (!BuildSnapshotFromIni(*snapshot)) {
-        spdlog::error("[FB] Config: Reload parse failed; keeping old snapshot");
+    next->eventMap.clear();
+    next->scripts.clear();
+
+    if (!BuildSnapshotFromIni(*next)) {
+        spdlog::error("[FB] Config: Reload failed; keeping gen={}", GetGeneration());
         return false;
     }
 
-    g_snapshot = std::move(snapshot);
+    g_snapshot = std::move(next);
+    spdlog::info("[FB] Config: Reload success; gen={}", GetGeneration());
     return true;
 }
 
 
-Generation FBConfig::GetGeneration() const { return g_snapshot ? g_snapshot->generation : 0; }
+
+
+//Generation FBConfig::GetGeneration() const { return g_snapshot ? g_snapshot->generation : 0; }
 
 std::shared_ptr<const Snapshot> FBConfig::GetSnapshot() const { return g_snapshot; }

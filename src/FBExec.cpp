@@ -1,4 +1,5 @@
 #include "FBExec.h"
+#include "FBMaps.h"
 
 #include <spdlog/spdlog.h>
 
@@ -29,8 +30,37 @@ void FB::Exec::Execute(const FBCommand& cmd, const FBEvent& ctxEvent) {
                          static_cast<std::uint32_t>(cmd.role), ctxEvent.actor.formID);
             return;
         }
+        auto nodeName = FB::Maps::ResolveNode(cmd.target);
 
         FBTransform::ApplyScale(actor, cmd.target, scale);
+        return;
+    }
+
+    spdlog::info("[FB] Exec: cmd type {} not implemented (opcode='{}')", static_cast<std::uint32_t>(cmd.type),
+                 cmd.opcode);
+}
+
+void FB::Exec::Execute_MainThread(const FBCommand& cmd, const FBEvent& ctxEvent) {
+    // This should be the same logic as Execute(), except it calls _MainThread transform variants.
+    if (cmd.type == FBCommandType::Transform && cmd.opcode == "Scale") {
+        float scale = 1.0f;
+        if (!TryParseFloat(cmd.args, scale)) {
+            spdlog::warn("[FB] Exec: failed to parse scale from args='{}'", cmd.args);
+            return;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(ctxEvent, cmd.role);
+        if (!actor) {
+            spdlog::info("[FB] Exec: could not resolve actor for role={} formID=0x{:08X}",
+                         static_cast<std::uint32_t>(cmd.role), ctxEvent.actor.formID);
+            return;
+        }
+
+        // Node mapping (pass-through if not found)
+        const auto nodeName = FB::Maps::ResolveNode(cmd.target);
+
+        // IMPORTANT: we are already on the game thread in Tick()
+        FBTransform::ApplyScale_MainThread(actor, nodeName, scale);
         return;
     }
 

@@ -7,9 +7,9 @@
 #include <RE/Skyrim.h>
 #include <spdlog/spdlog.h>
 
-#include "FBConfig.h"
+
 #include "FBEvents.h"
-#include "FBTransform.h"
+
 #include "FBExec.h" 
 #include <unordered_map>
 #include <string_view>
@@ -85,16 +85,35 @@ static void ApplyReset(const ActiveTimeline& tl) {
             continue;
         }
 
-        if (FBTransform::ApplyScale(actor, nodeName, original)) {
+        float dummy = 0.0f;
+        if (FBTransform::TryGetScale(actor, nodeName, dummy)) {
+            FBTransform::ApplyScale(actor, nodeName, original);
             spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
                          (roleChar == 'T' ? "T" : "C"), nodeName, original);
         }
+
     }
 }
 
 
 void FBUpdate::Tick(float dtSeconds) {
     const auto snap = _config.GetSnapshot();
+
+    if (_lastSeenGeneration != snap->generation) {
+        spdlog::info("[FB] Generation change {} -> {}; dropping {} timelines", _lastSeenGeneration, snap->generation,
+                     _activeTimelines.size());
+
+        if (snap->ResetOnPairEnd) {
+            for (auto& tl : _activeTimelines) {
+                ApplyReset(tl);
+            }
+        }
+
+        _activeTimelines.clear();
+        _lastSeenGeneration = snap->generation;
+    }
+
+
     if (!snap) {
         spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
         return;
@@ -237,7 +256,8 @@ void FBUpdate::Tick(float dtSeconds) {
                 timed.size(), static_cast<std::uint32_t>(cmd.type), cmd.opcode);
 
             CaptureOriginalScaleIfNeeded(tl, cmd);
-            FB::Exec::Execute(cmd, tl.event);
+            FB::Exec::Execute_MainThread(cmd, tl.event);
+
 
             ++tl.nextIndex;  // CRITICAL: progress!
         }
