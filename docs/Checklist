@@ -88,9 +88,8 @@ INI command rules (NOT IMPLEMENTED YET)
 
 Node Mapping (PARTIAL)
 [x] Stable author-facing node keys exist somewhere in-code (current node library)
-[ ] Node mapper lives in a neutral shared location (FBStructs or FBTransform)
-[ ] Existing node lists from the old project are used as reference only
-[ ] Node mapping reused by Transform and Morph systems (single source of truth)
+[x] Node mapper lives in a neutral shared location (FBMaps)
+[x] Existing node lists from the old project are used as reference only
 
 Timeline Execution (NOT IMPLEMENTED YET)
 [x] Track elapsed time since animation start (per active timeline instance)
