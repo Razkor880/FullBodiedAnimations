@@ -93,20 +93,20 @@ Node Mapping (PARTIAL)
 [ ] Node mapping reused by Transform and Morph systems (single source of truth)
 
 Timeline Execution (NOT IMPLEMENTED YET)
-[ ] Track elapsed time since animation start (per active timeline instance)
-[ ] Execute TimedCommands when their timestamp is reached
-[ ] Ensure commands execute only once
-[ ] Support multiple overlapping timelines (at minimum: multiple actors)
+[x] Track elapsed time since animation start (per active timeline instance)
+[x] Execute TimedCommands when their timestamp is reached
+[x] Ensure commands execute only once
+[x] Support multiple overlapping timelines (at minimum: multiple actors)
 [x] Support paired roles (Caster and Target) as separate timelines
-[ ] Keep execution logic entirely inside FBUpdate
-[ ] FBConfig does parsing only; FBUpdate does execution only (no text parsing in tick)
+[x] Keep execution logic entirely inside FBUpdate
+[x] FBConfig does parsing only; FBUpdate does execution only (no text parsing in tick)
 
 CURRENT CODE REALITY CHECK (helps avoid regressions)
 [x] A test FB event can flow through the system and reach execution
 [x] Commands can execute on valid 3D actors
 [x] Scale operations can be executed as a command (known-working executor path)
-[ ] Timeline scheduling based on time does NOT exist yet (everything fires immediately)
-[ ] INI parsing does NOT exist yet (hardcoded Snapshot content only)
+[x] Timeline scheduling based on time does NOT exist yet (everything fires immediately)
+[x] INI parsing does NOT exist yet (hardcoded Snapshot content only)
 
 Exit condition:
 INI-defined timelines execute at the correct times during animation playback (with correct role targeting), without changing the existing backbone modules.
