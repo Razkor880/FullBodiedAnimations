@@ -40,12 +40,8 @@ void FBTransform::ApplyScale_MainThread(RE::Actor* actor, std::string_view nodeN
 
     obj->local.scale = scale;
 
-    // If you ever need to force updates, revisit this—leave off for now as you had it.
-    // RE::NiUpdateData updateData{};
-    // obj->UpdateWorldData(&updateData);
-
-    spdlog::info("[FB] Transform.ApplyScale_MainThread: actor 0x{:08X} node='{}' scale={}", actor->formID, nodeName,
-                 scale);
+    spdlog::debug("[FB] Transform.ApplyScale_MainThread: APPLIED actor=0x{:08X} node='{}' scale={}", actor->formID,
+                  nodeName, scale);
 }
 
 void FBTransform::ApplyScale(RE::Actor* actor, std::string_view nodeName, float scale) {

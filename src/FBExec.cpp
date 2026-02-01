@@ -30,15 +30,18 @@ void FB::Exec::Execute(const FBCommand& cmd, const FBEvent& ctxEvent) {
                          static_cast<std::uint32_t>(cmd.role), ctxEvent.actor.formID);
             return;
         }
-        auto nodeName = FB::Maps::ResolveNode(cmd.target);
 
-        FBTransform::ApplyScale(actor, cmd.target, scale);
+        const auto nodeName = FB::Maps::ResolveNode(cmd.target);
+
+        // Safe-any-thread version (queues a task)
+        FBTransform::ApplyScale(actor, nodeName, scale);
         return;
     }
 
     spdlog::info("[FB] Exec: cmd type {} not implemented (opcode='{}')", static_cast<std::uint32_t>(cmd.type),
                  cmd.opcode);
 }
+
 
 void FB::Exec::Execute_MainThread(const FBCommand& cmd, const FBEvent& ctxEvent) {
     // This should be the same logic as Execute(), except it calls _MainThread transform variants.

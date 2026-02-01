@@ -3,6 +3,7 @@
 #include "FBActors.h"
 #include "FBTransform.h"
 #include "FBConfig.h"
+#include "FBMaps.h"
 
 #include <RE/Skyrim.h>
 #include <spdlog/spdlog.h>
@@ -42,8 +43,11 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
         return;
     }
 
-    // Build key (role + node)
-    auto key = MakeRoleNodeKey(cmd.role, cmd.target);
+    // Resolve friendly key -> actual node name (pass-through if already a real name)
+    const std::string_view resolvedNode = FB::Maps::ResolveNode(cmd.target);
+
+    // Build key (role + resolved node name)
+    auto key = MakeRoleNodeKey(cmd.role, resolvedNode);
     if (tl.originalScale.find(key) != tl.originalScale.end()) {
         return;  // already captured
     }
@@ -54,17 +58,20 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
         return;
     }
 
-    // Read current scale from node
+    // Read current scale from node (use resolved name)
     float current = 1.0f;
-    if (!FBTransform::TryGetScale(actor, cmd.target, current)) {
+    if (!FBTransform::TryGetScale(actor, resolvedNode, current)) {
+        spdlog::debug("[FB] Reset: capture failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
+                      (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode);
         return;
     }
 
     tl.originalScale.emplace(std::move(key), current);
 
-    spdlog::info("[FB] Reset: captured actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
-                 (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, current);
+    spdlog::info("[FB] Reset: captured actor=0x{:08X} role={} key='{}' node='{}' scale={}", actor->formID,
+                 (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current);
 }
+
 
 static void ApplyReset(const ActiveTimeline& tl) {
     if (tl.originalScale.empty()) {
@@ -77,7 +84,7 @@ static void ApplyReset(const ActiveTimeline& tl) {
         }
 
         const char roleChar = key[0];
-        const std::string_view nodeName(key.c_str() + 2);
+        const std::string_view nodeName(key.c_str() + 2);  // NOW: this is already resolved (e.g. "NPC Pelvis [Pelv]")
 
         const ActorRole role = (roleChar == 'T') ? ActorRole::Target : ActorRole::Caster;
         RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
@@ -85,15 +92,14 @@ static void ApplyReset(const ActiveTimeline& tl) {
             continue;
         }
 
-        float dummy = 0.0f;
-        if (FBTransform::TryGetScale(actor, nodeName, dummy)) {
-            FBTransform::ApplyScale(actor, nodeName, original);
-            spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
-                         (roleChar == 'T' ? "T" : "C"), nodeName, original);
-        }
+        FBTransform::ApplyScale_MainThread(actor, nodeName, original);
 
+        spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
+                     (roleChar == 'T' ? "T" : "C"), nodeName, original);
     }
 }
+
+
 
 
 void FBUpdate::Tick(float dtSeconds) {
