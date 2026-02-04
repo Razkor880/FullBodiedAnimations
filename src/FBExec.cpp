@@ -3,6 +3,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "FBMorph.h"
 #include "FBActors.h"
 #include "FBTransform.h"
 
@@ -36,7 +37,32 @@ void FB::Exec::Execute(const FBCommand& cmd, const FBEvent& ctxEvent) {
         // Safe-any-thread version (queues a task)
         FBTransform::ApplyScale(actor, nodeName, scale);
         return;
+
+
+
     }
+
+    if (cmd.type == FBCommandType::Morph && cmd.opcode == "Set") {
+        float value = 0.0f;
+        if (!TryParseFloat(cmd.args, value)) {
+            spdlog::warn("[FB] Exec: failed to parse morph value from args='{}'", cmd.args);
+            return;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(ctxEvent, cmd.role);
+        if (!actor) {
+            spdlog::info("[FB] Exec: could not resolve actor for role={} formID=0x{:08X}",
+                         static_cast<std::uint32_t>(cmd.role), ctxEvent.actor.formID);
+            return;
+        }
+
+        const auto morphName = FB::Maps::ResolveMorph(cmd.target);
+
+        // Safe-any-thread version (queues a task)
+        FB::Morph::Set(actor, morphName, value);
+        return;
+    }
+
 
     spdlog::info("[FB] Exec: cmd type {} not implemented (opcode='{}')", static_cast<std::uint32_t>(cmd.type),
                  cmd.opcode);
@@ -66,6 +92,33 @@ void FB::Exec::Execute_MainThread(const FBCommand& cmd, const FBEvent& ctxEvent)
         FBTransform::ApplyScale_MainThread(actor, nodeName, scale);
         return;
     }
+
+    if (cmd.type == FBCommandType::Morph && cmd.opcode == "Set") {
+        float value = 0.0f;
+        if (!TryParseFloat(cmd.args, value)) {
+            spdlog::warn("[FB] Exec: failed to parse morph value from args='{}'", cmd.args);
+            return;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(ctxEvent, cmd.role);
+        if (!actor) {
+            spdlog::info("[FB] Exec: could not resolve actor for role={} formID=0x{:08X}",
+                         static_cast<std::uint32_t>(cmd.role), ctxEvent.actor.formID);
+            return;
+        }
+
+        const auto morphName = FB::Maps::ResolveMorph(cmd.target);
+
+        spdlog::info("[FB] Exec: MORPH Set actor=0x{:08X} role={} morph='{}' value={}", actor->formID,
+                     static_cast<std::uint32_t>(cmd.role), morphName, value);
+
+        // Defer Papyrus to task queue even from Tick, to avoid VM timing/reentrancy CTDs.
+        FB::Morph::Set(actor, morphName, value);
+        return;
+    }
+
+
+
 
     spdlog::info("[FB] Exec: cmd type {} not implemented (opcode='{}')", static_cast<std::uint32_t>(cmd.type),
                  cmd.opcode);

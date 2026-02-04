@@ -1,24 +1,24 @@
 #include "FBUpdate.h"
-#include "FBStructs.h"
-#include "FBActors.h"
-#include "FBTransform.h"
-#include "FBConfig.h"
-#include "FBMaps.h"
 
 #include <RE/Skyrim.h>
 #include <spdlog/spdlog.h>
 
-
-#include "FBEvents.h"
-
-#include "FBExec.h" 
-#include <unordered_map>
-#include <string_view>
+#include <algorithm>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
+#include "FBActors.h"
+#include "FBConfig.h"
+#include "FBEvents.h"
+#include "FBExec.h"
+#include "FBMaps.h"
+#include "FBMorph.h"
+#include "FBStructs.h"
+#include "FBTransform.h"
 
 FBUpdate::FBUpdate(FBConfig& config, FBEvents& events) : _config(config), _events(events) {}
-
 
 static std::string MakeRoleNodeKey(ActorRole role, std::string_view nodeName) {
     std::string key;
@@ -35,7 +35,6 @@ static auto FindActiveTimelineIter(std::vector<ActiveTimeline>& timelines, const
         return tl.event.actor.formID == e.actor.formID && tl.scriptKey == scriptKey;
     });
 }
-
 
 static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cmd) {
     // Only capture for scale transforms
@@ -72,21 +71,17 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
                  (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current);
 }
 
-
 static void ApplyReset(const ActiveTimeline& tl) {
-    if (tl.originalScale.empty()) {
-        return;
-    }
-
+    // 1) Restore captured scales
     for (const auto& [key, original] : tl.originalScale) {
         if (key.size() < 3) {
             continue;
         }
 
         const char roleChar = key[0];
-        const std::string_view nodeName(key.c_str() + 2);  // NOW: this is already resolved (e.g. "NPC Pelvis [Pelv]")
-
+        const std::string_view nodeName(key.c_str() + 2);
         const ActorRole role = (roleChar == 'T') ? ActorRole::Target : ActorRole::Caster;
+
         RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
         if (!actor) {
             continue;
@@ -97,18 +92,52 @@ static void ApplyReset(const ActiveTimeline& tl) {
         spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
                      (roleChar == 'T' ? "T" : "C"), nodeName, original);
     }
-}
 
+    // 2) Clear morphs once per role
+    auto ClearRoleMorphs = [&](ActorRole role, const char* roleLabel, const std::unordered_set<std::string>& morphs) {
+        if (morphs.empty()) {
+            return;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
+        if (!actor) {
+            return;
+        }
+
+        // Guard for now; note actor might unload before task executes, so FB::Morph::Clear should re-check too.
+        if (!actor->Get3D1(false)) {
+            spdlog::info("[FB] Reset: skip morph clear (3D not loaded) actor=0x{:08X} role={}", actor->formID,
+                         roleLabel);
+            return;
+        }
+
+        for (const auto& m : morphs) {
+            FB::Morph::Clear(actor, m);  // queued wrapper
+        }
+
+        spdlog::info("[FB] Reset: queued morph clears actor=0x{:08X} role={} count={}", actor->formID, roleLabel,
+                     morphs.size());
+    };
+
+    ClearRoleMorphs(ActorRole::Caster, "C", tl.touchedMorphsCaster);
+    ClearRoleMorphs(ActorRole::Target, "T", tl.touchedMorphsTarget);
+}
 
 
 
 void FBUpdate::Tick(float dtSeconds) {
     const auto snap = _config.GetSnapshot();
+    if (!snap) {
+        spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
+        return;
+    }
 
     if (_lastSeenGeneration != snap->generation) {
         spdlog::info("[FB] Generation change {} -> {}; dropping {} timelines", _lastSeenGeneration, snap->generation,
                      _activeTimelines.size());
 
+        // Generation drop is effectively an immediate teardown; keep this immediate
+        // (you can delay this later if you want, but it’s usually better to reset now).
         if (snap->ResetOnPairEnd) {
             for (auto& tl : _activeTimelines) {
                 ApplyReset(tl);
@@ -117,12 +146,6 @@ void FBUpdate::Tick(float dtSeconds) {
 
         _activeTimelines.clear();
         _lastSeenGeneration = snap->generation;
-    }
-
-
-    if (!snap) {
-        spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
-        return;
     }
 
     _timeSeconds += dtSeconds;
@@ -150,13 +173,39 @@ void FBUpdate::Tick(float dtSeconds) {
 
         const auto& scriptKey = mapIt->second;
 
-        // PairEnd is a clip-end marker: close an existing timeline, do NOT start/reset.
+        // PairEnd is a clip-end marker: close an existing timeline, do NOT start/reset immediately.
         if (e.tag == "PairEnd") {
             auto it = FindActiveTimelineIter(_activeTimelines, e, scriptKey);
             if (it != _activeTimelines.end()) {
-                if (snap->ResetOnPairEnd) {  // NOTE: correct casing
+                if (snap->ResetOnPairEnd) {
+                    const float delay = snap->ResetDelay;
+
+                    if (delay > 0.0f) {
+                        // Schedule reset instead of applying immediately.
+                        // Keep the timeline alive until the delayed reset fires in section (3).
+                        if (!it->resetScheduled) {
+                            it->resetScheduled = true;
+                            it->resetAtSeconds = _timeSeconds + static_cast<double>(delay);
+
+                            spdlog::info(
+                                "[FB] Timeline: CLOSE (PairEnd) scheduled reset actor=0x{:08X} scriptKey='{}' delay={} "
+                                "at={}",
+                                e.actor.formID, scriptKey, delay, it->resetAtSeconds);
+                        } else {
+                            spdlog::info(
+                                "[FB] Timeline: CLOSE (PairEnd) reset already scheduled actor=0x{:08X} scriptKey='{}' "
+                                "at={}",
+                                e.actor.formID, scriptKey, it->resetAtSeconds);
+                        }
+
+                        // IMPORTANT: do NOT erase timeline yet.
+                        continue;
+                    }
+
+                    // No delay: apply immediately (current behavior)
                     ApplyReset(*it);
                 }
+
                 spdlog::info("[FB] Timeline: CLOSE (PairEnd) actor=0x{:08X} scriptKey='{}'", e.actor.formID, scriptKey);
                 _activeTimelines.erase(it);
             } else {
@@ -165,9 +214,6 @@ void FBUpdate::Tick(float dtSeconds) {
             }
             continue;
         }
-
-
-
 
         const auto scriptIt = snap->scripts.find(scriptKey);
         if (scriptIt == snap->scripts.end()) {
@@ -189,7 +235,16 @@ void FBUpdate::Tick(float dtSeconds) {
             tl.nextIndex = 0;
             tl.generation = snap->generation;
             tl.commandsComplete = false;
+
+            // New: clear any reset schedule state (defensive)
+            tl.resetScheduled = false;
+            tl.resetAtSeconds = 0.0;
+            tl.touchedMorphCaster = false;
+            tl.touchedMorphTarget = false;
+
             _activeTimelines.emplace_back(std::move(tl));
+            tl.touchedMorphsCaster.clear();
+            tl.touchedMorphsTarget.clear();
 
 
             spdlog::info("[FB] Timeline: START actor=0x{:08X} eventTag='{}' scriptKey='{}' gen={} ({} cmds)",
@@ -203,13 +258,16 @@ void FBUpdate::Tick(float dtSeconds) {
             findIt->generation = snap->generation;
             findIt->commandsComplete = false;
 
+            // New: on explicit reset/start event, clear pending reset schedule
+            findIt->resetScheduled = false;
+            findIt->resetAtSeconds = 0.0;
+
+
             spdlog::info("[FB] Timeline: RESET actor=0x{:08X} eventTag='{}' scriptKey='{}' gen={} ({} cmds)",
                          e.actor.formID, eventTag, scriptKey, snap->generation, scriptIt->second.size());
         }
-        
-
-
     }
+
     std::size_t guard = 0;
 
     // 3) Tick active timelines and fire due commands
@@ -224,19 +282,57 @@ void FBUpdate::Tick(float dtSeconds) {
         // Always recompute elapsed from subtraction (fine)
         tl.elapsed = _timeSeconds - tl.startTimeSeconds;
 
+        // If PairEnd scheduled a delayed reset, wait for time then reset+drop.
+        if (tl.resetScheduled) {
+            if (_timeSeconds >= tl.resetAtSeconds) {
+                ApplyReset(tl);
+                spdlog::info("[FB] Timeline: RESET (delayed) actor=0x{:08X} scriptKey='{}' now={} at={}",
+                             tl.event.actor.formID, tl.scriptKey, _timeSeconds, tl.resetAtSeconds);
+
+                // erase by swap-pop to avoid O(n)
+                _activeTimelines[i] = std::move(_activeTimelines.back());
+                _activeTimelines.pop_back();
+                continue;  // i stays same to process swapped-in element
+            }
+
+            // Not time yet: do not fire commands; just move on.
+            ++i;
+            continue;
+        }
+
         // Find script commands for this timeline
         const auto itScript = snap->scripts.find(tl.scriptKey);
         if (itScript == snap->scripts.end()) {
             // Drop timeline if script missing
             if (snap->ResetOnPairEnd) {
+                const float delay = snap->ResetDelay;
+
+                if (delay > 0.0f) {
+                    // Schedule reset and keep timeline around until it fires
+                    if (!tl.resetScheduled) {
+                        tl.resetScheduled = true;
+                        tl.resetAtSeconds = _timeSeconds + static_cast<double>(delay);
+
+                        spdlog::info(
+                            "[FB] Timeline: DROP missing scriptKey='{}' scheduled reset actor=0x{:08X} delay={} at={}",
+                            tl.scriptKey, tl.event.actor.formID, delay, tl.resetAtSeconds);
+                    }
+
+                    // IMPORTANT: do NOT erase timeline yet; advance i to avoid spin
+                    ++i;
+                    continue;
+                }
+
+                // Immediate reset on drop
                 ApplyReset(tl);
             }
+
             spdlog::info("[FB] Timeline: DROP missing scriptKey='{}'", tl.scriptKey);
 
             // erase by swap-pop to avoid O(n)
             _activeTimelines[i] = std::move(_activeTimelines.back());
             _activeTimelines.pop_back();
-            continue;  // OK: i stays same to process swapped-in element
+            continue;  // i stays same to process swapped-in element
         }
 
         const auto& timed = itScript->second;
@@ -264,6 +360,24 @@ void FBUpdate::Tick(float dtSeconds) {
             CaptureOriginalScaleIfNeeded(tl, cmd);
             FB::Exec::Execute_MainThread(cmd, tl.event);
 
+            if (cmd.type == FBCommandType::Morph) {
+                const std::string_view morphName = FB::Maps::ResolveMorph(cmd.target);
+
+                if (cmd.role == ActorRole::Caster) {
+                    tl.touchedMorphsCaster.emplace(morphName);
+                } else if (cmd.role == ActorRole::Target) {
+                    tl.touchedMorphsTarget.emplace(morphName);
+                }
+            }
+
+
+            if (cmd.type == FBCommandType::Morph) {
+                if (cmd.role == ActorRole::Target) {
+                    tl.touchedMorphTarget = true;
+                } else if (cmd.role == ActorRole::Caster) {
+                    tl.touchedMorphCaster = true;
+                }
+            }
 
             ++tl.nextIndex;  // CRITICAL: progress!
         }

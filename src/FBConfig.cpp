@@ -13,7 +13,7 @@
 namespace {
     std::shared_ptr<const Snapshot> g_snapshot;
 
-    static inline void TrimInPlace(std::string& s) {
+    static inline void FBTrimInPlace(std::string& s) {
         auto notSpace = [](unsigned char c) { return !std::isspace(c); };
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
         s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
@@ -98,12 +98,12 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
 
     while (std::getline(in, line)) {
         StripInlineComment(line);
-        TrimInPlace(line);
+        FBTrimInPlace(line);
         if (line.empty()) continue;
 
         if (line.front() == '[' && line.back() == ']') {
             currentSection = line.substr(1, line.size() - 2);
-            TrimInPlace(currentSection);
+            FBTrimInPlace(currentSection);
             continue;
         }
 
@@ -112,8 +112,8 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
 
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
-        TrimInPlace(key);
-        TrimInPlace(val);
+        FBTrimInPlace(key);
+        FBTrimInPlace(val);
 
         if (IEquals(currentSection, "General")) {
             if (IEquals(key, "EnableTimelines")) {
@@ -122,6 +122,18 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             if (IEquals(key, "ResetOnPairEnd")) {
                 out.ResetOnPairEnd = (val == "true" || val == "1" || IEquals(val, "true"));
             }
+            if (IEquals(key, "ResetDelay")) {
+                try {
+                    out.ResetDelay = std::stof(val);
+                    if (out.ResetDelay < 0.0f) {
+                        out.ResetDelay = 0.0f;
+                    }
+                } catch (...) {
+                    spdlog::warn("[FB] Config: invalid ResetDelay='{}' (expected seconds float); using 0.0", val);
+                    out.ResetDelay = 0.0f;
+                }
+            }
+        
         } else if (IEquals(currentSection, "FBFiles")) {
             if (!key.empty() && !val.empty()) {
                 fbFiles[key] = val;
@@ -199,12 +211,12 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
         std::string l2;
         while (std::getline(ain, l2)) {
             StripInlineComment(l2);
-            TrimInPlace(l2);
+            FBTrimInPlace(l2);
             if (l2.empty()) continue;
 
             if (l2.front() == '[' && l2.back() == ']') {
                 std::string sect = l2.substr(1, l2.size() - 2);
-                TrimInPlace(sect);
+                FBTrimInPlace(sect);
                 if (sect == wantCaster) {
                     spdlog::info("[FB] INI: entered Caster section ({})", sect);
                     sec = Sec::Caster;
@@ -228,7 +240,7 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
 
             std::string cmdStr;
             std::getline(iss, cmdStr);
-            TrimInPlace(cmdStr);
+            FBTrimInPlace(cmdStr);
 
             if (cmdStr.empty()) continue;
 
@@ -240,7 +252,7 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             if (cmdStr.rfind("2_", 0) == 0) {
                 targetOverride = true;
                 cmdStr = cmdStr.substr(2);
-                TrimInPlace(cmdStr);
+                FBTrimInPlace(cmdStr);
             }
 
             if (sec == Sec::Caster && targetOverride) {
@@ -254,36 +266,45 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             }
 
             std::string opAndNode = cmdStr.substr(0, open);
-            TrimInPlace(opAndNode);
+            FBTrimInPlace(opAndNode);
 
             std::string argStr = cmdStr.substr(open + 1, close - open - 1);
-            TrimInPlace(argStr);
+            FBTrimInPlace(argStr);
 
 
 
 
 
-            if (opAndNode.rfind("FBScale_", 0) != 0) {
+            FBCommand cmd{};
+            cmd.role = role;
+            cmd.generation = out.generation;
+
+            if (opAndNode.rfind("FBScale_", 0) == 0) {
+                std::string nodeKey = opAndNode.substr(std::string("FBScale_").size());
+                FBTrimInPlace(nodeKey);
+
+                std::string niNode = NodeKeyToNiNode(nodeKey);
+
+                cmd.type = FBCommandType::Transform;
+                cmd.opcode = "Scale";
+                cmd.target = niNode;  // may be friendly key or full node; Exec will ResolveNode anyway
+                cmd.args = argStr;
+
+            } else if (opAndNode.rfind("FBMorph_", 0) == 0) {
+                std::string morphKey = opAndNode.substr(std::string("FBMorph_").size());
+                FBTrimInPlace(morphKey);
+
+                cmd.type = FBCommandType::Morph;
+                cmd.opcode = "Set";
+                cmd.target = morphKey;  // KEEP FRIENDLY KEY; Exec will ResolveMorph (pass-through for now)
+                cmd.args = argStr;
+
+            } else {
                 continue;
             }
 
-            std::string nodeKey = opAndNode.substr(std::string("FBScale_").size());
-            TrimInPlace(nodeKey);
 
-
-
-
-
-            std::string niNode = NodeKeyToNiNode(nodeKey);
-
-            FBCommand cmd{};
-            cmd.type = FBCommandType::Transform;
-            cmd.role = role;
-            cmd.generation = out.generation;
-            cmd.opcode = "Scale";
-            cmd.target = niNode;
-            cmd.args = argStr;
-
+            
 
             TimedCommand tc{};
             tc.time = *t;
