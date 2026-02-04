@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 using Generation = std::uint64_t;
 
@@ -88,6 +89,14 @@ struct ActiveTimeline
     std::unordered_map<std::string, float> originalScale;
     bool commandsComplete = false;
     float startTimeSeconds = 0.0f;
+    bool resetScheduled = false;
+    double resetAtSeconds = 0.0;
+    bool touchedMorphCaster = false;
+    bool touchedMorphTarget = false;
+    std::unordered_set<std::string> touchedMorphsCaster;
+    std::unordered_set<std::string> touchedMorphsTarget;
+
+
 };
 
 using FBCommandList = std::vector<FBCommand>;

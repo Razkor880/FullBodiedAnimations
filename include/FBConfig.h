@@ -11,6 +11,7 @@
 struct Snapshot {
     Generation generation = 0;
     bool ResetOnPairEnd = false;
+    float ResetDelay = 0.0f;
 
     std::unordered_map<std::string, std::string> eventMap;
     std::unordered_map<std::string, TimedCommandList> scripts;
