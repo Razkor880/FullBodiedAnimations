@@ -95,6 +95,11 @@ struct ActiveTimeline
     bool touchedMorphTarget = false;
     std::unordered_set<std::string> touchedMorphsCaster;
     std::unordered_set<std::string> touchedMorphsTarget;
+    std::unordered_map<std::string, float> sustainMorphsCaster;
+    std::unordered_map<std::string, float> sustainMorphsTarget;
+
+    // optional throttle so we don't spam Papyrus every frame
+    float nextSustainAtSeconds = 0.0f;
 
 
 };
