@@ -1,4 +1,5 @@
 #include "FBConfig.h"
+#include "FBMaps.h"
 
 
 #include <memory>
@@ -283,11 +284,12 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                 std::string nodeKey = opAndNode.substr(std::string("FBScale_").size());
                 FBTrimInPlace(nodeKey);
 
-                std::string niNode = NodeKeyToNiNode(nodeKey);
+                const std::string_view resolved = FB::Maps::ResolveNode(nodeKey);
 
                 cmd.type = FBCommandType::Transform;
                 cmd.opcode = "Scale";
-                cmd.target = niNode;  // may be friendly key or full node; Exec will ResolveNode anyway
+                cmd.target = std::string(resolved);  // store owning copy
+                //cmd.target = niNode;  // may be friendly key or full node; Exec will ResolveNode anyway
                 cmd.args = argStr;
 
             } else if (opAndNode.rfind("FBMorph_", 0) == 0) {
@@ -310,12 +312,15 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
             tc.time = *t;
             tc.command = std::move(cmd);
 
-            out.scripts[scriptKey].push_back(std::move(tc));
-
             spdlog::info("[FB] INI: added cmd t={} role={} op='{}' target='{}' args='{}'", tc.time,
                          (tc.command.role == ActorRole::Caster ? "Caster" : "Target"), tc.command.opcode,
                          tc.command.target, tc.command.args);
 
+
+            out.scripts[scriptKey].push_back(std::move(tc));
+
+
+            
 
         }
 

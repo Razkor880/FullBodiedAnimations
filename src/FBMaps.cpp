@@ -4,6 +4,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <optional>
 
 namespace {
     // string literals only => stable string_view targets
@@ -85,6 +86,17 @@ namespace {
         {"RClv", "NPC R Clavicle [RClv]"},
     };
 
+    const std::unordered_map<std::string_view, std::string_view> kMorphMap{
+        // From FBMorph - OLD.h (trimmed to what you actually want)
+        {"PreyBelly", "Vore Prey Belly"},       
+        {"PreyBelly2", "Vore Prey Belly 2"},
+        {"PreyBelly3", "Vore Prey Belly 3"},    
+        {"StruggleBumps1", "Struggle Bumps 1"},
+        {"StruggleBumps2", "Struggle Bumps 2"}, 
+        {"StruggleBumps3", "Struggle Bumps 3"},
+        {"Swallow1", "FB Swallow 1"},
+    };
+
     // log unknown keys once to avoid spam
     static std::unordered_set<std::string> g_unknownNodeKeys;
 }
@@ -108,6 +120,71 @@ namespace FB::Maps {
     }
 
     std::string_view ResolveMorph(std::string_view key) {
-        return key;  // stub pass-through for now
+        if (key.empty()) {
+            return key;
+        }
+        if (auto it = kMorphMap.find(key); it != kMorphMap.end()) {
+            return it->second;
+        }
+        return key;  // pass-through
+    }
+
+     std::optional<std::int32_t> TryGetPhonemeIndex(std::string_view name) {
+        using sv = std::string_view;
+        if (name == sv{"Aah"}) return 0;
+        if (name == sv{"BigAah"}) return 1;
+        if (name == sv{"BMP"}) return 2;
+        if (name == sv{"ChJSh"}) return 3;
+        if (name == sv{"DST"}) return 4;
+        if (name == sv{"Eee"}) return 5;
+        if (name == sv{"Eh"}) return 6;
+        if (name == sv{"FV"}) return 7;
+        if (name == sv{"I"}) return 8;
+        if (name == sv{"K"}) return 9;
+        if (name == sv{"N"}) return 10;
+        if (name == sv{"Oh"}) return 11;
+        if (name == sv{"OohQ"}) return 12;
+        if (name == sv{"R"}) return 13;
+        if (name == sv{"Th"}) return 14;
+        if (name == sv{"W"}) return 15;
+        return std::nullopt;
+    }
+
+    std::optional<std::int32_t> TryGetMoodId(std::string_view name) {
+        using sv = std::string_view;
+        if (name == sv{"Neutral"}) return 7;
+        if (name == sv{"Anger"}) return 8;
+        if (name == sv{"Fear"}) return 9;
+        if (name == sv{"Happy"}) return 10;
+        if (name == sv{"Sad"}) return 11;
+        if (name == sv{"Surprise"}) return 12;
+        if (name == sv{"Puzzled"}) return 13;
+        if (name == sv{"Disgusted"}) return 14;
+        return std::nullopt;
+    }
+
+    std::optional<std::int32_t> TryGetModifierIndex(std::string_view name) {
+        using sv = std::string_view;
+
+        // Eyes / look
+        if (name == sv{"BlinkL"} || name == sv{"BlinkLeft"}) return 0;
+        if (name == sv{"BlinkR"} || name == sv{"BlinkRight"}) return 1;
+        if (name == sv{"LookDown"}) return 8;
+        if (name == sv{"LookLeft"}) return 9;
+        if (name == sv{"LookRight"}) return 10;
+        if (name == sv{"LookUp"}) return 11;
+
+        if (name == sv{"SquintL"} || name == sv{"SquintLeft"}) return 12;
+        if (name == sv{"SquintR"} || name == sv{"SquintRight"}) return 13;
+
+        // Brows
+        if (name == sv{"BrowDownL"} || name == sv{"BrowDownLeft"}) return 2;
+        if (name == sv{"BrowDownR"} || name == sv{"BrowDownRight"}) return 3;
+        if (name == sv{"BrowInL"} || name == sv{"BrowInLeft"}) return 4;
+        if (name == sv{"BrowInR"} || name == sv{"BrowInRight"}) return 5;
+        if (name == sv{"BrowUpL"} || name == sv{"BrowUpLeft"}) return 6;
+        if (name == sv{"BrowUpR"} || name == sv{"BrowUpRight"}) return 7;
+
+        return std::nullopt;
     }
 }

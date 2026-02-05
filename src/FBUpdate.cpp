@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -71,7 +72,43 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
                  (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current);
 }
 
-static void ApplyReset(const ActiveTimeline& tl) {
+static void ApplySustain(ActiveTimeline& tl, float nowSeconds) {
+    // Throttle: 10 Hz is usually plenty for “win the tug-of-war” without spamming Papyrus.
+    constexpr float kSustainInterval = 0.10f;
+
+    if (nowSeconds < tl.nextSustainAtSeconds) {
+        return;
+    }
+    tl.nextSustainAtSeconds = nowSeconds + kSustainInterval;
+
+    auto applyForRole = [&](ActorRole role, const char* roleLabel,
+                            const std::unordered_map<std::string, float>& morphs) {
+        if (morphs.empty()) {
+            return;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
+        if (!actor) {
+            return;
+        }
+
+        // Only try if actor has 3D loaded; avoids pointless calls and reduces risk.
+        if (!actor->Get3D1(false)) {
+            return;
+        }
+
+        // Re-apply each sustained morph/expression
+        for (const auto& [name, value] : morphs) {
+            FB::Morph::Set(actor, name, value);  // queued wrapper (safer)
+        }
+    };
+
+    applyForRole(ActorRole::Caster, "C", tl.sustainMorphsCaster);
+    applyForRole(ActorRole::Target, "T", tl.sustainMorphsTarget);
+}
+
+
+static void ApplyReset(ActiveTimeline& tl) {
     // 1) Restore captured scales
     for (const auto& [key, original] : tl.originalScale) {
         if (key.size() < 3) {
@@ -93,8 +130,9 @@ static void ApplyReset(const ActiveTimeline& tl) {
                      (roleChar == 'T' ? "T" : "C"), nodeName, original);
     }
 
-    // 2) Clear morphs once per role
-    auto ClearRoleMorphs = [&](ActorRole role, const char* roleLabel, const std::unordered_set<std::string>& morphs) {
+    // 2) Clear sustained morphs (RaceMenu + expressions) once per role
+    auto ClearRoleMorphs = [&](ActorRole role, const char* roleLabel,
+                               const std::unordered_map<std::string, float>& morphs) {
         if (morphs.empty()) {
             return;
         }
@@ -104,23 +142,33 @@ static void ApplyReset(const ActiveTimeline& tl) {
             return;
         }
 
-        // Guard for now; note actor might unload before task executes, so FB::Morph::Clear should re-check too.
+        // If actor isn't loaded, we still clear our internal sustain state below.
+        // We just skip attempting to push clears to the game.
         if (!actor->Get3D1(false)) {
             spdlog::info("[FB] Reset: skip morph clear (3D not loaded) actor=0x{:08X} role={}", actor->formID,
                          roleLabel);
             return;
         }
 
-        for (const auto& m : morphs) {
-            FB::Morph::Clear(actor, m);  // queued wrapper
+        for (const auto& [name, _value] : morphs) {
+            FB::Morph::Clear_MainThread(actor, name);  // queued wrapper (safe)
         }
 
         spdlog::info("[FB] Reset: queued morph clears actor=0x{:08X} role={} count={}", actor->formID, roleLabel,
                      morphs.size());
     };
 
-    ClearRoleMorphs(ActorRole::Caster, "C", tl.touchedMorphsCaster);
-    ClearRoleMorphs(ActorRole::Target, "T", tl.touchedMorphsTarget);
+    ClearRoleMorphs(ActorRole::Caster, "C", tl.sustainMorphsCaster);
+    ClearRoleMorphs(ActorRole::Target, "T", tl.sustainMorphsTarget);
+
+    // 3) Clear internal state so sustain stops immediately
+    tl.sustainMorphsCaster.clear();
+    tl.sustainMorphsTarget.clear();
+    tl.touchedMorphsCaster.clear();  // optional: if you still keep these sets around
+    tl.touchedMorphsTarget.clear();  // optional
+
+    tl.originalScale.clear();        // optional: avoids carrying stale scale captures
+    tl.nextSustainAtSeconds = 0.0f;  // optional: reset throttle
 }
 
 
@@ -140,6 +188,8 @@ void FBUpdate::Tick(float dtSeconds) {
         // (you can delay this later if you want, but it’s usually better to reset now).
         if (snap->ResetOnPairEnd) {
             for (auto& tl : _activeTimelines) {
+                ApplySustain(tl, _timeSeconds);
+
                 ApplyReset(tl);
             }
         }
@@ -361,23 +411,32 @@ void FBUpdate::Tick(float dtSeconds) {
             FB::Exec::Execute_MainThread(cmd, tl.event);
 
             if (cmd.type == FBCommandType::Morph) {
-                const std::string_view morphName = FB::Maps::ResolveMorph(cmd.target);
+                const std::string_view resolvedSV = FB::Maps::ResolveMorph(cmd.target);
+                const std::string morphName(resolvedSV);  // owning key
 
-                if (cmd.role == ActorRole::Caster) {
-                    tl.touchedMorphsCaster.emplace(morphName);
-                } else if (cmd.role == ActorRole::Target) {
-                    tl.touchedMorphsTarget.emplace(morphName);
+                // Parse cmd.args as float
+                float v = 0.0f;
+                {
+                    // minimal local parse (no dependency on FBExec helpers)
+                    std::string tmp(cmd.args);
+                    char* end = nullptr;
+                    v = std::strtof(tmp.c_str(), &end);
+                    if (end == tmp.c_str()) {
+                        spdlog::warn("[FB] Sustain: failed to parse morph value args='{}' morph='{}'", cmd.args,
+                                     morphName);
+                        // don't record sustain if we can't parse
+                    } else {
+                        if (cmd.role == ActorRole::Caster) {
+                            tl.sustainMorphsCaster[morphName] = v;
+                        } else if (cmd.role == ActorRole::Target) {
+                            tl.sustainMorphsTarget[morphName] = v;
+                        }
+                    }
                 }
             }
 
 
-            if (cmd.type == FBCommandType::Morph) {
-                if (cmd.role == ActorRole::Target) {
-                    tl.touchedMorphTarget = true;
-                } else if (cmd.role == ActorRole::Caster) {
-                    tl.touchedMorphCaster = true;
-                }
-            }
+
 
             ++tl.nextIndex;  // CRITICAL: progress!
         }
