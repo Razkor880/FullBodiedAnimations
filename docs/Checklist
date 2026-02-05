@@ -137,12 +137,12 @@ Goal: Fully implement morph and expression support.
 
 Remaining work
 
-[ ] Support arbitrary RaceMenu slider morphs by name
-[ ] Support multiple simultaneous morphs
-[ ] Support facial expressions (phonemes, expressions, or equivalent)
-[ ] Support target selection (Caster / Target)
-[ ] Ensure morph application is reversible
-[ ] Keep FBMorph stateless; no timing or tween logic inside
+[x] Support arbitrary RaceMenu slider morphs by name
+[x] Support multiple simultaneous morphs
+[x] Support facial expressions (phonemes, expressions, or equivalent)
+[x] Support target selection (Caster / Target)
+[x] Ensure morph application is reversible
+[x] Keep FBMorph stateless; no timing or tween logic inside
 
 Exit condition:
 FBMorph can drive any RaceMenu morph or expression via timeline commands.
