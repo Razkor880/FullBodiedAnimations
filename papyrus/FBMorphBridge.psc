@@ -1,7 +1,4 @@
 Scriptname FBMorphBridge Hidden
-
-; RaceMenu / NiOverride provides these native globals.
-; This requires that NiOverride.psc is available to compile (RaceMenu).
 Import NiOverride
 
 String Function FBKey() Global
@@ -9,31 +6,23 @@ String Function FBKey() Global
 EndFunction
 
 Function FBSetMorph(Actor akActor, String morphName, Float value) Global
-    if akActor == None
-        return
-    endif
-    if morphName == ""
+    if akActor == None || morphName == ""
         return
     endif
 
     NiOverride.SetBodyMorph(akActor, morphName, FBKey(), value)
+    NiOverride.ApplyMorphs(akActor)
+    NiOverride.UpdateModelWeight(akActor)
 
-    if akActor.Is3DLoaded()
-        NiOverride.UpdateModelWeight(akActor)
-    endif
 EndFunction
 
+; NOTE: name matches kFnClear = "FBClearMorph"
 Function FBClearMorph(Actor akActor, String morphName) Global
-    if akActor == None
-        return
-    endif
-    if morphName == ""
+    if akActor == None || morphName == ""
         return
     endif
 
     NiOverride.ClearBodyMorph(akActor, morphName, FBKey())
-
-    if akActor.Is3DLoaded()
-        NiOverride.UpdateModelWeight(akActor)
-    endif
+    NiOverride.ApplyMorphs(akActor)
+    NiOverride.UpdateModelWeight(akActor)
 EndFunction
