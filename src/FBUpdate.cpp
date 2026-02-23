@@ -61,51 +61,160 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
     // Read current scale from node (use resolved name)
     float current = 1.0f;
     if (!FBTransform::TryGetScale(actor, resolvedNode, current)) {
-        spdlog::debug("[FB] Reset: capture failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
+        spdlog::info("[FB] Reset: capture failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
                       (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode);
         return;
-    }
+
+    } 
 
     tl.originalScale.emplace(std::move(key), current);
 
     spdlog::info("[FB] Reset: captured actor=0x{:08X} role={} key='{}' node='{}' scale={}", actor->formID,
                  (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current);
+
+}
+
+static void CaptureOriginalTranslateIfNeeded(ActiveTimeline& tl, const FBCommand& cmd) {
+    // Only capture for move transforms
+    if (cmd.type != FBCommandType::Transform || cmd.opcode != "Move") {
+        return;
+    }
+    const std::string_view resolvedNode = FB::Maps::ResolveNode(cmd.target);
+    auto key = MakeRoleNodeKey(cmd.role, resolvedNode);
+    if (tl.originalTranslate.find(key) != tl.originalTranslate.end()) {
+        return;  // already captured
+    }
+    RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, cmd.role);
+    if (!actor) {
+        return;
+    }
+    std::array<float, 3> current{0.0f, 0.0f, 0.0f};
+    if (!FBTransform::TryGetTranslate(actor, resolvedNode, current)) {
+        spdlog::debug("[FB] Reset: capture(move) failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
+                      (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode);
+        return;
+    }
+
+    tl.originalTranslate.emplace(std::move(key), current);
+    spdlog::info("[FB] Reset: captured(move) actor=0x{:08X} role={} key='{}' node='{}' pos=({}, {}, {})", actor->formID,
+                 (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current[0], current[1],
+                 current[2]);
 }
 
 static void ApplySustain(ActiveTimeline& tl, float nowSeconds) {
-    // Throttle: 10 Hz is usually plenty for “win the tug-of-war” without spamming Papyrus.
-    constexpr float kSustainInterval = 0.10f;
+    constexpr float kMorphSustainInterval = 0.10f;
 
-    if (nowSeconds < tl.nextSustainAtSeconds) {
-        return;
-    }
-    tl.nextSustainAtSeconds = nowSeconds + kSustainInterval;
-
-    auto applyForRole = [&](ActorRole role, const char* roleLabel,
-                            const std::unordered_map<std::string, float>& morphs) {
-        if (morphs.empty()) {
-            return;
-        }
-
+    auto applyMorphsForRole = [&](ActorRole role, const std::unordered_map<std::string, float>& morphs) {
+        if (morphs.empty()) return;
         RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
-        if (!actor) {
-            return;
-        }
-
-        // Only try if actor has 3D loaded; avoids pointless calls and reduces risk.
-        if (!actor->Get3D1(false)) {
-            return;
-        }
-
-        // Re-apply each sustained morph/expression
+        if (!actor || !actor->Get3D1(false)) return;
         for (const auto& [name, value] : morphs) {
-            FB::Morph::Set(actor, name, value);  // queued wrapper (safer)
+            FB::Morph::Set(actor, name, value);
         }
     };
 
-    applyForRole(ActorRole::Caster, "C", tl.sustainMorphsCaster);
-    applyForRole(ActorRole::Target, "T", tl.sustainMorphsTarget);
+    auto applyTranslateForRole = [&](ActorRole role,
+                                     const std::unordered_map<std::string, std::array<float, 3>>& moves) {
+        if (moves.empty()) return;
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
+        if (!actor || !actor->Get3D1(false)) return;
+
+        // Apply every tick (no throttle) so we can actually win vs animation.
+        for (const auto& [nodeName, vec] : moves) {
+            FBTransform::ApplyTranslate_MainThread(actor, nodeName, vec[0], vec[1], vec[2]);
+        }
+    };
+
+    // Transforms: always (per tick)
+    applyTranslateForRole(ActorRole::Caster, tl.sustainTranslateCaster);
+    applyTranslateForRole(ActorRole::Target, tl.sustainTranslateTarget);
+
+    // Morphs: throttled
+    if (nowSeconds >= tl.nextSustainAtSeconds) {
+        tl.nextSustainAtSeconds = nowSeconds + kMorphSustainInterval;
+        applyMorphsForRole(ActorRole::Caster, tl.sustainMorphsCaster);
+        applyMorphsForRole(ActorRole::Target, tl.sustainMorphsTarget);
+    }
 }
+
+
+void FBUpdate::ApplyPostAnimSustainForActor(RE::Actor* actor, std::uint8_t phase) {
+    if (!actor) {
+        return;
+    }
+    if (_activeTimelines.empty()) {
+        return;
+    }
+
+    auto* root = actor->Get3D1(false);
+    if (!root) {
+        return;
+    }
+
+    // Additive sustain:
+    // - sustainTranslate* maps store OFFSETS (dx,dy,dz)
+    // - in phase 0, capture the animated "base" translate for this frame into sustainTranslateBase*
+    // - in later phases, reuse the cached base so we don't double-add if we already applied
+    for (auto& tl : _activeTimelines) {
+        if (!tl.event.IsValid()) {
+            continue;
+        }
+
+        auto applyForRole = [&](ActorRole role, const std::unordered_map<std::string, std::array<float, 3>>& offsets,
+                                std::unordered_map<std::string, std::array<float, 3>>& lastApplied) {
+            if (offsets.empty()) {
+                return;
+            }
+
+            RE::Actor* resolved = FB::Actors::ResolveActorForEvent(tl.event, role);
+            if (!resolved || resolved != actor) {
+                return;
+            }
+
+            // Tolerance for "current == lastApplied" comparisons.
+            // Translate units are small-ish; tweak if needed.
+            constexpr float kEps = 0.0005f;
+
+            auto approxEq3 = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+                return std::fabs(a[0] - b[0]) <= kEps && std::fabs(a[1] - b[1]) <= kEps &&
+                       std::fabs(a[2] - b[2]) <= kEps;
+            };
+
+            for (const auto& [nodeName, off] : offsets) {
+                std::array<float, 3> cur{};
+                if (!FBTransform::TryGetTranslate(actor, nodeName, cur)) {
+                    continue;
+                }
+
+                // If the current value looks like what we applied last time, it's probably "base+offset".
+                // Recover base by subtracting offset. Otherwise treat current as base (someone overwrote us).
+                std::array<float, 3> base = cur;
+
+                auto itLast = lastApplied.find(nodeName);
+                if (itLast != lastApplied.end()) {
+                    if (approxEq3(cur, itLast->second)) {
+                        base[0] = cur[0] - off[0];
+                        base[1] = cur[1] - off[1];
+                        base[2] = cur[2] - off[2];
+                    }
+                }
+
+                std::array<float, 3> applied{base[0] + off[0], base[1] + off[1], base[2] + off[2]};
+
+                FBTransform::ApplyTranslate_MainThread(actor, nodeName, applied[0], applied[1], applied[2]);
+
+                // Record what we applied so we can detect double-apply next time.
+                lastApplied[nodeName] = applied;
+            }
+        };
+
+        applyForRole(ActorRole::Caster, tl.sustainTranslateCaster, tl.sustainTranslateLastAppliedCaster);
+        applyForRole(ActorRole::Target, tl.sustainTranslateTarget, tl.sustainTranslateLastAppliedTarget);
+    }
+}
+
+
+
 
 
 static void ApplyReset(ActiveTimeline& tl) {
@@ -129,6 +238,30 @@ static void ApplyReset(ActiveTimeline& tl) {
         spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
                      (roleChar == 'T' ? "T" : "C"), nodeName, original);
     }
+
+
+      // 1b) Restore captured translations
+    for (const auto& [key, original] : tl.originalTranslate) {
+        if (key.size() < 3) {
+            continue;
+        }
+        const char roleChar = key[0];
+        const std::string_view nodeName(key.c_str() + 2);
+        const ActorRole role = (roleChar == 'T') ? ActorRole::Target : ActorRole::Caster;
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
+        if (!actor) {
+            continue;
+        }
+        FBTransform::ApplyTranslate_MainThread(actor, nodeName, original[0], original[1], original[2]);
+        spdlog::info("[FB] Reset: applied(move) actor=0x{:08X} role={} node='{}' pos=({}, {}, {})", actor->formID,
+                     (roleChar == 'T' ? "T" : "C"), nodeName, original[0], original[1], original[2]);
+    }
+    
+
+
+
+
+
 
     // 2) Clear sustained morphs (RaceMenu + expressions) once per role
     auto ClearRoleMorphs = [&](ActorRole role, const char* roleLabel,
@@ -166,8 +299,15 @@ static void ApplyReset(ActiveTimeline& tl) {
     tl.sustainMorphsTarget.clear();
     tl.touchedMorphsCaster.clear();  // optional: if you still keep these sets around
     tl.touchedMorphsTarget.clear();  // optional
+    tl.sustainTranslateCaster.clear();
+    tl.sustainTranslateTarget.clear();
+    tl.sustainTranslateBaseCaster.clear();
+    tl.sustainTranslateBaseTarget.clear();
+    tl.sustainTranslateLastAppliedCaster.clear();
+    tl.sustainTranslateLastAppliedTarget.clear();
 
     tl.originalScale.clear();        // optional: avoids carrying stale scale captures
+    tl.originalTranslate.clear();    // optional: avoids carrying stale move captures
     tl.nextSustainAtSeconds = 0.0f;  // optional: reset throttle
 }
 
@@ -179,6 +319,7 @@ void FBUpdate::Tick(float dtSeconds) {
         spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
         return;
     }
+    ++_postAnimEpoch;
 
     if (_lastSeenGeneration != snap->generation) {
         spdlog::info("[FB] Generation change {} -> {}; dropping {} timelines", _lastSeenGeneration, snap->generation,
@@ -271,10 +412,9 @@ void FBUpdate::Tick(float dtSeconds) {
             continue;
         }
 
-        // Policy: 1 active timeline per actor (by formID)
-        auto findIt = std::find_if(_activeTimelines.begin(), _activeTimelines.end(), [&](const ActiveTimeline& tl) {
-            return tl.event.IsValid() && tl.event.actor.formID == e.actor.formID;
-        });
+        // Policy: 1 active timeline per actor + scriptKey (by formID)
+        auto findIt = FindActiveTimelineIter(_activeTimelines, e, scriptKey);
+
 
         if (findIt == _activeTimelines.end()) {
             ActiveTimeline tl{};
@@ -293,8 +433,7 @@ void FBUpdate::Tick(float dtSeconds) {
             tl.touchedMorphTarget = false;
 
             _activeTimelines.emplace_back(std::move(tl));
-            tl.touchedMorphsCaster.clear();
-            tl.touchedMorphsTarget.clear();
+
 
 
             spdlog::info("[FB] Timeline: START actor=0x{:08X} eventTag='{}' scriptKey='{}' gen={} ({} cmds)",
@@ -331,6 +470,8 @@ void FBUpdate::Tick(float dtSeconds) {
 
         // Always recompute elapsed from subtraction (fine)
         tl.elapsed = _timeSeconds - tl.startTimeSeconds;
+        ApplySustain(tl, _timeSeconds);
+
 
         // If PairEnd scheduled a delayed reset, wait for time then reset+drop.
         if (tl.resetScheduled) {
@@ -408,7 +549,58 @@ void FBUpdate::Tick(float dtSeconds) {
                 timed.size(), static_cast<std::uint32_t>(cmd.type), cmd.opcode);
 
             CaptureOriginalScaleIfNeeded(tl, cmd);
+            CaptureOriginalTranslateIfNeeded(tl, cmd);
             FB::Exec::Execute_MainThread(cmd, tl.event);
+
+
+            if (cmd.type == FBCommandType::Transform && cmd.opcode == "Move") {
+                float x = 0.0f, y = 0.0f, z = 0.0f;
+                // Use same parsing logic as Exec: reuse std::strtof minimal parse
+                // (Keep it local like your Morph sustain block does.)
+                {
+                    // Parse first three comma-separated floats
+                    std::string s = cmd.args;
+                    const char* p = s.c_str();
+                    char* end = nullptr;
+
+                    x = std::strtof(p, &end);
+                    if (end == p) {
+                        spdlog::warn("[FB] Sustain: failed to parse move x args='{}' node='{}'", cmd.args, cmd.target);
+                    } else {
+                        p = end;
+                        while (*p == ',' || *p == ' ' || *p == '\t') ++p;
+                        y = std::strtof(p, &end);
+                        if (end == p) {
+                            spdlog::warn("[FB] Sustain: failed to parse move y args='{}' node='{}'", cmd.args,
+                                         cmd.target);
+                        } else {
+                            p = end;
+                            while (*p == ',' || *p == ' ' || *p == '\t') ++p;
+                            z = std::strtof(p, &end);
+                            if (end == p) {
+                                spdlog::warn("[FB] Sustain: failed to parse move z args='{}' node='{}'", cmd.args,
+                                             cmd.target);
+                            } else {
+                                const std::string_view resolvedSV = FB::Maps::ResolveNode(cmd.target);
+                                const std::string nodeName(resolvedSV);  // owning key
+
+                                const std::array<float, 3> vec{x, y, z};
+
+                                if (cmd.role == ActorRole::Caster) {
+                                    tl.sustainTranslateCaster[nodeName] = vec;
+                                    tl.sustainTranslateBaseCaster.erase(nodeName);  // if still present
+                                    tl.sustainTranslateLastAppliedCaster.erase(nodeName);
+                                } else if (cmd.role == ActorRole::Target) {
+                                    tl.sustainTranslateTarget[nodeName] = vec;
+                                    tl.sustainTranslateBaseTarget.erase(nodeName);  // if still present
+                                    tl.sustainTranslateLastAppliedTarget.erase(nodeName);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
 
             if (cmd.type == FBCommandType::Morph) {
                 const std::string_view resolvedSV = FB::Maps::ResolveMorph(cmd.target);

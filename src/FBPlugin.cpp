@@ -16,17 +16,159 @@
 #include "SKSE/SKSE.h"
 #include "FBHotkeys.h"
 
-
 static FBConfig g_config;
 static FBEvents g_events;
 static std::unique_ptr<FBUpdate> g_update;
 static std::unique_ptr<FBUpdatePump> g_pump;
+FBUpdate* FB::GetUpdate() { return g_update.get(); }
 
 namespace {
     FBConfig* g_config_ptr = nullptr;
     bool Papyrus_ReloadConfig(RE::StaticFunctionTag*);
     std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*);
     std::int32_t Papyrus_TickOnce(RE::StaticFunctionTag*);
+
+    // IMPORTANT:
+    // Do NOT patch all vtables. Some entries in RE::VTABLE_* arrays are not Actor-layout
+    // and will crash when you replace vfunc slots.
+    //
+    // Iterate this ONE value across runs: 0,1,2,... until you get periodic Hook tick logs.
+    // If an index crashes at startup, revert and try the next.
+    constexpr std::size_t kCharacterVtableIndex = 9;
+
+    struct Actor_UpdateAnimation_Hook {
+        static void thunk(RE::Actor* self, float delta) {
+            static bool s_once = false;
+            if (!s_once) {
+                s_once = true;
+                spdlog::info("[FB] Hook tick FIRST HIT (pre): self=0x{:08X}", self ? self->formID : 0);
+            }
+
+            static std::uint32_t s_count = 0;
+            if ((++s_count % 60) == 0) {
+                spdlog::info("[FB] Hook tick: UpdateAnimation self=0x{:08X}", self ? self->formID : 0);
+            }
+
+            func(self, delta);  // original
+
+            auto* actor = self ? self->As<RE::Actor>() : nullptr;
+            if (!actor) {
+                return;
+            }
+            if (auto* up = FB::GetUpdate()) {
+                up->ApplyPostAnimSustainForActor(actor, 0);
+                up->ApplyPostAnimSustainForActor(actor, 1);
+                up->ApplyPostAnimSustainForActor(actor, 2);
+            }
+
+            auto* taskInterface = SKSE::GetTaskInterface();
+            if (taskInterface) {
+                const RE::ActorHandle handle = actor->CreateRefHandle();
+                taskInterface->AddTask([handle]() {
+                    auto aPtr = handle.get();
+                    RE::Actor* a = aPtr.get();
+                    if (!a) {
+                        return;
+                    }
+                    if (auto* up = FB::GetUpdate()) {
+                        up->ApplyPostAnimSustainForActor(a, 2);
+                    }
+                });
+            }
+
+            static std::uint32_t s_lateTickCounter = 0;
+            // optional phase 1 (second hit) – safe + helps fight flicker
+            // Sustain: task-only, 2 hits (late this frame + next frame) to beat late writers.
+            if ((++s_lateTickCounter % 1) == 0) {  // every ~3 UpdateAnimation calls
+                if (auto* taskInterface = SKSE::GetTaskInterface()) {
+                    const RE::ActorHandle handle = self ? self->CreateRefHandle() : RE::ActorHandle{};
+                    taskInterface->AddTask([handle]() {
+                        auto aPtr = handle.get();
+                        RE::Actor* a = aPtr.get();
+                        if (!a) {
+                            return;
+                        }
+
+                        if (auto* up2 = FB::GetUpdate()) {
+                            up2->ApplyPostAnimSustainForActor(a, 1);
+                        }
+                    });
+                }
+            }
+
+        }
+
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+
+
+    struct TESObjectREFR_UpdateAnimation_Hook {
+        using Fn = void (*)(RE::TESObjectREFR*, float);
+        static inline Fn func = nullptr;
+
+        static void thunk(RE::TESObjectREFR* self, float delta) {
+            // Call vanilla first
+            if (func) {
+                func(self, delta);
+            }
+
+            // Only actors
+            auto* actor = self ? self->As<RE::Actor>() : nullptr;
+            if (!actor) {
+                return;
+            }
+
+            if (!actor->Get3D1(false)) {
+                return;
+            }
+
+            // Defer sustain to task queue (later than this update call)
+            auto* taskInterface = SKSE::GetTaskInterface();
+            if (!taskInterface) {
+                return;
+            }
+
+            RE::ActorHandle handle = actor->CreateRefHandle();
+            taskInterface->AddTask([handle]() {
+                auto aPtr = handle.get();
+                RE::Actor* a = aPtr.get();
+                if (!a || !a->Get3D1(false)) {
+                    return;
+                }
+
+                if (auto* up = FB::GetUpdate()) {
+                    up->ApplyPostAnimSustainForActor(a, 0);  // phase 0 (immediate)
+                }
+
+                // phase 1 (deferred): schedule one more task
+                if (auto* taskInterface2 = SKSE::GetTaskInterface()) {
+                    taskInterface2->AddTask([handle]() {
+                        auto aPtr2 = handle.get();
+                        RE::Actor* a2 = aPtr2.get();
+                        if (!a2 || !a2->Get3D1(false)) {
+                            return;
+                        }
+
+                        if (auto* up2 = FB::GetUpdate()) {
+                            up2->ApplyPostAnimSustainForActor(a2, 1);  // phase 1
+                        }
+                    });
+                }
+            });
+
+
+        }
+    };
+
+    void InstallHooks() {
+        REL::Relocation<std::uintptr_t> vtbl{RE::VTABLE_TESObjectREFR[0]};
+        const std::uintptr_t orig = vtbl.write_vfunc(0x7D, &TESObjectREFR_UpdateAnimation_Hook::thunk);
+
+        TESObjectREFR_UpdateAnimation_Hook::func = reinterpret_cast<TESObjectREFR_UpdateAnimation_Hook::Fn>(orig);
+
+        spdlog::info("[FB] Hook: TESObjectREFR::UpdateAnimation vfunc installed (orig=0x{:016X})", orig);
+    }
 
     void SetupLogging() {
         auto path = SKSE::log::log_directory();
@@ -58,7 +200,6 @@ namespace {
         return true;
     }
 
-
     bool RegisterPapyrus() {
         g_config_ptr = std::addressof(g_config);
 
@@ -75,21 +216,6 @@ namespace {
             return true;
         });
     }
-
-    //bool Papyrus_ReloadConfig(RE::StaticFunctionTag*) {
-    //    spdlog::info("[FB] Papyrus: ReloadConfig() called");
-
-    //    const bool ok = g_config.Reload();  // <-- this must exist
-    //    if (!ok) {
-    //        spdlog::warn("[FB] Papyrus: ReloadConfig failed (keeping existing snapshot)");
-     //       return false;
-    //    }
-
-        // If you have GetGeneration(), log it. Otherwise log snapshot->generation after reload.
-    //    spdlog::info("[FB] Papyrus: ReloadConfig ok; gen={}", g_config.GetGeneration());
-   //     return true;
-   // }
-
 
     std::int32_t Papyrus_DrainEvents(RE::StaticFunctionTag*) {
         auto drained = g_events.Drain();
@@ -111,13 +237,15 @@ namespace {
         g_update->Tick(1.0f / 60.0f);
         return 1;
     }
-}
+}  // namespace
+
 
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     SetupLogging();
-
+    //SKSE::AllocTrampoline(256);
     spdlog::info("[FB] Plugin loaded");
+    InstallHooks();
 
     if (!g_config.LoadInitial()) {
         spdlog::error("[FB] Config LoadInitial failed");
