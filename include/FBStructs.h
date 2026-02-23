@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -87,6 +88,7 @@ struct ActiveTimeline
     std::size_t nextIndex = 0;
     std::uint64_t generation = 0;
     std::unordered_map<std::string, float> originalScale;
+    std::unordered_map<std::string, std::array<float, 3>> originalTranslate;
     bool commandsComplete = false;
     float startTimeSeconds = 0.0f;
     bool resetScheduled = false;
@@ -98,8 +100,19 @@ struct ActiveTimeline
     std::unordered_map<std::string, float> sustainMorphsCaster;
     std::unordered_map<std::string, float> sustainMorphsTarget;
 
+    // Sustained Move is now an OFFSET (added on top of animated base pose).
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateCaster;
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateTarget;
+
+    // Per-frame base pose cache captured in phase 0 (so later phases don't double-add).
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateBaseCaster;
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateBaseTarget;
     // optional throttle so we don't spam Papyrus every frame
     float nextSustainAtSeconds = 0.0f;
+
+    // Additive sustain support: last value we applied (to detect double-apply and derive base).
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateLastAppliedCaster;
+    std::unordered_map<std::string, std::array<float, 3>> sustainTranslateLastAppliedTarget;
 
 
 };
