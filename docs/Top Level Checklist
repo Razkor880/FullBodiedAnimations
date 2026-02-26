@@ -118,16 +118,10 @@ Goal: Fully implement transform operations for animation-driven body manipulatio
 [x] Scale operations work visually in game
 
 Remaining work
-
-[ ] Support node translation (local position)
-[ ] Support node rotation (local rotation)
-[ ] Support combined transform operations (scale + rotate + move)
-[ ] Support any valid skeleton NiNode as a target
-[ ] Ensure transforms respect actor 1P / 3P state correctly
 [ ] Keep FBTransform stateless; no timing or tween logic inside
 
 Exit condition:
-FBTransform can apply location, rotation, and scale to any specified node at runtime.
+FBTransform can apply scale to any specified node at runtime.
 
 PHASE 4 – FBMORPH BUILD-OUT (PLANNED)
 
