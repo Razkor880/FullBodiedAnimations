@@ -20,6 +20,71 @@ namespace {
         s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
     }
 
+    static bool TryParseFloatStrict(std::string_view s, float& out) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
+
+        if (s.empty()) return false;
+
+        std::string tmp(s);
+        char* end = nullptr;
+        out = std::strtof(tmp.c_str(), &end);
+        return end != tmp.c_str();
+    }
+
+    static std::string ToLowerCopy(std::string s) {
+        for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    }
+
+    // Parses:  "0.5,tween=2.0,delay=0.25,easing=Linear"
+    static bool ParseArgsAndTweenSpec(const std::string& inArgs, std::string& outPrimary, TweenSpec& outTween) {
+        outPrimary.clear();
+        outTween = TweenSpec{};
+
+        std::string work = inArgs;
+        FBTrimInPlace(work);
+        if (work.empty()) return false;
+
+        std::vector<std::string> parts;
+        std::stringstream ss(work);
+        std::string token;
+
+        while (std::getline(ss, token, ',')) {
+            FBTrimInPlace(token);
+            if (!token.empty()) parts.push_back(token);
+        }
+
+        if (parts.empty()) return false;
+
+        // First token without '=' is primary value
+        for (const auto& p : parts) {
+            if (p.find('=') == std::string::npos) {
+                outPrimary = p;
+                break;
+            }
+        }
+
+        if (outPrimary.empty()) return false;
+
+        for (const auto& p : parts) {
+            auto eq = p.find('=');
+            if (eq == std::string::npos) continue;
+
+            std::string key = ToLowerCopy(p.substr(0, eq));
+            std::string val = p.substr(eq + 1);
+            FBTrimInPlace(val);
+
+            if (key == "tween") {
+                outTween.hasTween = true;  // important: user explicitly set tween=
+                float f;
+                if (TryParseFloatStrict(val, f) && f >= 0.0f) outTween.duration = f;
+            }
+        }
+
+        return true;
+    }
+
     static inline void StripInlineComment(std::string& s) { 
         auto posHash = s.find('#');
         auto posSemi = s.find(';');
@@ -134,6 +199,26 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                     out.ResetDelay = 0.0f;
                 }
             }
+            if (IEquals(key, "DefaultTweenScale")) {
+                try {
+                    out.DefaultTweenScale = std::stof(val);
+                    if (out.DefaultTweenScale < 0.0f) out.DefaultTweenScale = 0.0f;
+                } catch (...) {
+                    spdlog::warn("[FB] Config: invalid DefaultTweenScale='{}'; using 0.0", val);
+                    out.DefaultTweenScale = 0.0f;
+                }
+            }
+
+            if (IEquals(key, "DefaultTweenMorph")) {
+                try {
+                    out.DefaultTweenMorph = std::stof(val);
+                    if (out.DefaultTweenMorph < 0.0f) out.DefaultTweenMorph = 0.0f;
+                } catch (...) {
+                    spdlog::warn("[FB] Config: invalid DefaultTweenMorph='{}'; using 0.0", val);
+                    out.DefaultTweenMorph = 0.0f;
+                }
+            }
+
         
         } else if (IEquals(currentSection, "FBFiles")) {
             if (!key.empty() && !val.empty()) {
@@ -299,7 +384,17 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                 cmd.type = FBCommandType::Morph;
                 cmd.opcode = "Set";
                 cmd.target = morphKey;  // KEEP FRIENDLY KEY; Exec will ResolveMorph (pass-through for now)
-                cmd.args = argStr;
+                {
+                    std::string primary;
+                    TweenSpec tween{};
+
+                    if (ParseArgsAndTweenSpec(argStr, primary, tween)) {
+                        cmd.args = primary;
+                        cmd.tween = tween;
+                    } else {
+                        cmd.args = argStr;  // fallback legacy behavior
+                    }
+                }
 
             } else {
                 continue;

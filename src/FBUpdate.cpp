@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -61,161 +62,98 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
     // Read current scale from node (use resolved name)
     float current = 1.0f;
     if (!FBTransform::TryGetScale(actor, resolvedNode, current)) {
-        spdlog::info("[FB] Reset: capture failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
+        spdlog::debug("[FB] Reset: capture failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
                       (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode);
         return;
-
-    } 
+    }
 
     tl.originalScale.emplace(std::move(key), current);
 
     spdlog::info("[FB] Reset: captured actor=0x{:08X} role={} key='{}' node='{}' scale={}", actor->formID,
                  (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current);
-
-}
-
-static void CaptureOriginalTranslateIfNeeded(ActiveTimeline& tl, const FBCommand& cmd) {
-    // Only capture for move transforms
-    if (cmd.type != FBCommandType::Transform || cmd.opcode != "Move") {
-        return;
-    }
-    const std::string_view resolvedNode = FB::Maps::ResolveNode(cmd.target);
-    auto key = MakeRoleNodeKey(cmd.role, resolvedNode);
-    if (tl.originalTranslate.find(key) != tl.originalTranslate.end()) {
-        return;  // already captured
-    }
-    RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, cmd.role);
-    if (!actor) {
-        return;
-    }
-    std::array<float, 3> current{0.0f, 0.0f, 0.0f};
-    if (!FBTransform::TryGetTranslate(actor, resolvedNode, current)) {
-        spdlog::debug("[FB] Reset: capture(move) failed actor=0x{:08X} role={} key='{}' resolved='{}'", actor->formID,
-                      (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode);
-        return;
-    }
-
-    tl.originalTranslate.emplace(std::move(key), current);
-    spdlog::info("[FB] Reset: captured(move) actor=0x{:08X} role={} key='{}' node='{}' pos=({}, {}, {})", actor->formID,
-                 (cmd.role == ActorRole::Target ? "T" : "C"), cmd.target, resolvedNode, current[0], current[1],
-                 current[2]);
 }
 
 static void ApplySustain(ActiveTimeline& tl, float nowSeconds) {
-    constexpr float kMorphSustainInterval = 0.10f;
+    // Throttle: 10 Hz is usually plenty for “win the tug-of-war” without spamming Papyrus.
+    constexpr float kSustainInterval = 0.10f;
 
-    auto applyMorphsForRole = [&](ActorRole role, const std::unordered_map<std::string, float>& morphs) {
-        if (morphs.empty()) return;
+    if (nowSeconds < tl.nextSustainAtSeconds) {
+        return;
+    }
+    tl.nextSustainAtSeconds = nowSeconds + kSustainInterval;
+
+    auto applyForRole = [&](ActorRole role, const char* roleLabel,
+                            const std::unordered_map<std::string, float>& morphs) {
+        if (morphs.empty()) {
+            return;
+        }
+
         RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
-        if (!actor || !actor->Get3D1(false)) return;
+        if (!actor) {
+            return;
+        }
+
+        // Only try if actor has 3D loaded; avoids pointless calls and reduces risk.
+        if (!actor->Get3D1(false)) {
+            return;
+        }
+
+        // Re-apply each sustained morph/expression
         for (const auto& [name, value] : morphs) {
-            FB::Morph::Set(actor, name, value);
+            FB::Morph::Set(actor, name, value);  // queued wrapper (safer)
         }
     };
 
-    auto applyTranslateForRole = [&](ActorRole role,
-                                     const std::unordered_map<std::string, std::array<float, 3>>& moves) {
-        if (moves.empty()) return;
-        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
-        if (!actor || !actor->Get3D1(false)) return;
-
-        // Apply every tick (no throttle) so we can actually win vs animation.
-        for (const auto& [nodeName, vec] : moves) {
-            FBTransform::ApplyTranslate_MainThread(actor, nodeName, vec[0], vec[1], vec[2]);
-        }
-    };
-
-    // Transforms: always (per tick)
-    applyTranslateForRole(ActorRole::Caster, tl.sustainTranslateCaster);
-    applyTranslateForRole(ActorRole::Target, tl.sustainTranslateTarget);
-
-    // Morphs: throttled
-    if (nowSeconds >= tl.nextSustainAtSeconds) {
-        tl.nextSustainAtSeconds = nowSeconds + kMorphSustainInterval;
-        applyMorphsForRole(ActorRole::Caster, tl.sustainMorphsCaster);
-        applyMorphsForRole(ActorRole::Target, tl.sustainMorphsTarget);
-    }
+    applyForRole(ActorRole::Caster, "C", tl.sustainMorphsCaster);
+    applyForRole(ActorRole::Target, "T", tl.sustainMorphsTarget);
 }
 
-
-void FBUpdate::ApplyPostAnimSustainForActor(RE::Actor* actor, std::uint8_t phase) {
-    if (!actor) {
-        return;
-    }
-    if (_activeTimelines.empty()) {
-        return;
-    }
-
-    auto* root = actor->Get3D1(false);
-    if (!root) {
-        return;
-    }
-
-    // Additive sustain:
-    // - sustainTranslate* maps store OFFSETS (dx,dy,dz)
-    // - in phase 0, capture the animated "base" translate for this frame into sustainTranslateBase*
-    // - in later phases, reuse the cached base so we don't double-add if we already applied
-    for (auto& tl : _activeTimelines) {
-        if (!tl.event.IsValid()) {
-            continue;
-        }
-
-        auto applyForRole = [&](ActorRole role, const std::unordered_map<std::string, std::array<float, 3>>& offsets,
-                                std::unordered_map<std::string, std::array<float, 3>>& lastApplied) {
-            if (offsets.empty()) {
-                return;
-            }
-
-            RE::Actor* resolved = FB::Actors::ResolveActorForEvent(tl.event, role);
-            if (!resolved || resolved != actor) {
-                return;
-            }
-
-            // Tolerance for "current == lastApplied" comparisons.
-            // Translate units are small-ish; tweak if needed.
-            constexpr float kEps = 0.0005f;
-
-            auto approxEq3 = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
-                return std::fabs(a[0] - b[0]) <= kEps && std::fabs(a[1] - b[1]) <= kEps &&
-                       std::fabs(a[2] - b[2]) <= kEps;
-            };
-
-            for (const auto& [nodeName, off] : offsets) {
-                std::array<float, 3> cur{};
-                if (!FBTransform::TryGetTranslate(actor, nodeName, cur)) {
-                    continue;
-                }
-
-                // If the current value looks like what we applied last time, it's probably "base+offset".
-                // Recover base by subtracting offset. Otherwise treat current as base (someone overwrote us).
-                std::array<float, 3> base = cur;
-
-                auto itLast = lastApplied.find(nodeName);
-                if (itLast != lastApplied.end()) {
-                    if (approxEq3(cur, itLast->second)) {
-                        base[0] = cur[0] - off[0];
-                        base[1] = cur[1] - off[1];
-                        base[2] = cur[2] - off[2];
-                    }
-                }
-
-                std::array<float, 3> applied{base[0] + off[0], base[1] + off[1], base[2] + off[2]};
-
-                FBTransform::ApplyTranslate_MainThread(actor, nodeName, applied[0], applied[1], applied[2]);
-
-                // Record what we applied so we can detect double-apply next time.
-                lastApplied[nodeName] = applied;
-            }
-        };
-
-        applyForRole(ActorRole::Caster, tl.sustainTranslateCaster, tl.sustainTranslateLastAppliedCaster);
-        applyForRole(ActorRole::Target, tl.sustainTranslateTarget, tl.sustainTranslateLastAppliedTarget);
-    }
+static float Clamp01(float x) {
+    if (x < 0.0f) return 0.0f;
+    if (x > 1.0f) return 1.0f;
+    return x;
 }
 
+static float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
+static float ApplyEasing(Easing easing, float t) {
+    return t;  // Linear only for now
+}
 
+static std::string MakeTweenKey(std::uint32_t formID, ActorRole role, std::string_view channel) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%08X|%u|", formID, static_cast<unsigned>(role));
+    return std::string(buf) + std::string(channel);
+}
 
+static std::string MakeMorphCacheKey(std::uint32_t formID, ActorRole role, std::string_view morphName) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%08X|%u|", formID, static_cast<unsigned>(role));
+    return std::string(buf) + std::string(morphName);
+}
+
+static void CancelTweensForActor(std::unordered_map<std::string, FBUpdate::ActiveTween>& activeTweens,
+                                 std::unordered_map<std::string, float>& lastMorphValue, std::uint32_t formID) {
+    char prefixBuf[16];
+    std::snprintf(prefixBuf, sizeof(prefixBuf), "0x%08X|", formID);
+    const std::string prefix(prefixBuf);
+
+    for (auto it = activeTweens.begin(); it != activeTweens.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = activeTweens.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto it = lastMorphValue.begin(); it != lastMorphValue.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = lastMorphValue.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 static void ApplyReset(ActiveTimeline& tl) {
     // 1) Restore captured scales
@@ -238,30 +176,6 @@ static void ApplyReset(ActiveTimeline& tl) {
         spdlog::info("[FB] Reset: applied actor=0x{:08X} role={} node='{}' scale={}", actor->formID,
                      (roleChar == 'T' ? "T" : "C"), nodeName, original);
     }
-
-
-      // 1b) Restore captured translations
-    for (const auto& [key, original] : tl.originalTranslate) {
-        if (key.size() < 3) {
-            continue;
-        }
-        const char roleChar = key[0];
-        const std::string_view nodeName(key.c_str() + 2);
-        const ActorRole role = (roleChar == 'T') ? ActorRole::Target : ActorRole::Caster;
-        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tl.event, role);
-        if (!actor) {
-            continue;
-        }
-        FBTransform::ApplyTranslate_MainThread(actor, nodeName, original[0], original[1], original[2]);
-        spdlog::info("[FB] Reset: applied(move) actor=0x{:08X} role={} node='{}' pos=({}, {}, {})", actor->formID,
-                     (roleChar == 'T' ? "T" : "C"), nodeName, original[0], original[1], original[2]);
-    }
-    
-
-
-
-
-
 
     // 2) Clear sustained morphs (RaceMenu + expressions) once per role
     auto ClearRoleMorphs = [&](ActorRole role, const char* roleLabel,
@@ -297,21 +211,12 @@ static void ApplyReset(ActiveTimeline& tl) {
     // 3) Clear internal state so sustain stops immediately
     tl.sustainMorphsCaster.clear();
     tl.sustainMorphsTarget.clear();
-    tl.touchedMorphsCaster.clear();  // optional: if you still keep these sets around
-    tl.touchedMorphsTarget.clear();  // optional
-    tl.sustainTranslateCaster.clear();
-    tl.sustainTranslateTarget.clear();
-    tl.sustainTranslateBaseCaster.clear();
-    tl.sustainTranslateBaseTarget.clear();
-    tl.sustainTranslateLastAppliedCaster.clear();
-    tl.sustainTranslateLastAppliedTarget.clear();
+    tl.touchedMorphsCaster.clear();
+    tl.touchedMorphsTarget.clear();
 
-    tl.originalScale.clear();        // optional: avoids carrying stale scale captures
-    tl.originalTranslate.clear();    // optional: avoids carrying stale move captures
-    tl.nextSustainAtSeconds = 0.0f;  // optional: reset throttle
+    tl.originalScale.clear();
+    tl.nextSustainAtSeconds = 0.0f;
 }
-
-
 
 void FBUpdate::Tick(float dtSeconds) {
     const auto snap = _config.GetSnapshot();
@@ -319,23 +224,22 @@ void FBUpdate::Tick(float dtSeconds) {
         spdlog::warn("[FB] Tick(dt={}): no config snapshot", dtSeconds);
         return;
     }
-    ++_postAnimEpoch;
 
     if (_lastSeenGeneration != snap->generation) {
         spdlog::info("[FB] Generation change {} -> {}; dropping {} timelines", _lastSeenGeneration, snap->generation,
                      _activeTimelines.size());
 
-        // Generation drop is effectively an immediate teardown; keep this immediate
-        // (you can delay this later if you want, but it’s usually better to reset now).
         if (snap->ResetOnPairEnd) {
             for (auto& tl : _activeTimelines) {
                 ApplySustain(tl, _timeSeconds);
-
+                CancelTweensForActor(_activeTweens, _lastMorphValue, tl.event.actor.formID);
                 ApplyReset(tl);
             }
         }
 
         _activeTimelines.clear();
+        _activeTweens.clear();
+        _lastMorphValue.clear();
         _lastSeenGeneration = snap->generation;
     }
 
@@ -372,8 +276,6 @@ void FBUpdate::Tick(float dtSeconds) {
                     const float delay = snap->ResetDelay;
 
                     if (delay > 0.0f) {
-                        // Schedule reset instead of applying immediately.
-                        // Keep the timeline alive until the delayed reset fires in section (3).
                         if (!it->resetScheduled) {
                             it->resetScheduled = true;
                             it->resetAtSeconds = _timeSeconds + static_cast<double>(delay);
@@ -389,11 +291,10 @@ void FBUpdate::Tick(float dtSeconds) {
                                 e.actor.formID, scriptKey, it->resetAtSeconds);
                         }
 
-                        // IMPORTANT: do NOT erase timeline yet.
                         continue;
                     }
 
-                    // No delay: apply immediately (current behavior)
+                    CancelTweensForActor(_activeTweens, _lastMorphValue, it->event.actor.formID);
                     ApplyReset(*it);
                 }
 
@@ -412,9 +313,10 @@ void FBUpdate::Tick(float dtSeconds) {
             continue;
         }
 
-        // Policy: 1 active timeline per actor + scriptKey (by formID)
-        auto findIt = FindActiveTimelineIter(_activeTimelines, e, scriptKey);
-
+        // Policy: 1 active timeline per actor (by formID)
+        auto findIt = std::find_if(_activeTimelines.begin(), _activeTimelines.end(), [&](const ActiveTimeline& tl) {
+            return tl.event.IsValid() && tl.event.actor.formID == e.actor.formID;
+        });
 
         if (findIt == _activeTimelines.end()) {
             ActiveTimeline tl{};
@@ -425,16 +327,14 @@ void FBUpdate::Tick(float dtSeconds) {
             tl.nextIndex = 0;
             tl.generation = snap->generation;
             tl.commandsComplete = false;
-
-            // New: clear any reset schedule state (defensive)
             tl.resetScheduled = false;
             tl.resetAtSeconds = 0.0;
             tl.touchedMorphCaster = false;
             tl.touchedMorphTarget = false;
 
             _activeTimelines.emplace_back(std::move(tl));
-
-
+            _activeTimelines.back().touchedMorphsCaster.clear();
+            _activeTimelines.back().touchedMorphsTarget.clear();
 
             spdlog::info("[FB] Timeline: START actor=0x{:08X} eventTag='{}' scriptKey='{}' gen={} ({} cmds)",
                          e.actor.formID, eventTag, scriptKey, snap->generation, scriptIt->second.size());
@@ -446,11 +346,8 @@ void FBUpdate::Tick(float dtSeconds) {
             findIt->nextIndex = 0;
             findIt->generation = snap->generation;
             findIt->commandsComplete = false;
-
-            // New: on explicit reset/start event, clear pending reset schedule
             findIt->resetScheduled = false;
             findIt->resetAtSeconds = 0.0;
-
 
             spdlog::info("[FB] Timeline: RESET actor=0x{:08X} eventTag='{}' scriptKey='{}' gen={} ({} cmds)",
                          e.actor.formID, eventTag, scriptKey, snap->generation, scriptIt->second.size());
@@ -467,39 +364,30 @@ void FBUpdate::Tick(float dtSeconds) {
         }
 
         auto& tl = _activeTimelines[i];
-
-        // Always recompute elapsed from subtraction (fine)
         tl.elapsed = _timeSeconds - tl.startTimeSeconds;
-        ApplySustain(tl, _timeSeconds);
 
-
-        // If PairEnd scheduled a delayed reset, wait for time then reset+drop.
         if (tl.resetScheduled) {
             if (_timeSeconds >= tl.resetAtSeconds) {
+                CancelTweensForActor(_activeTweens, _lastMorphValue, tl.event.actor.formID);
                 ApplyReset(tl);
                 spdlog::info("[FB] Timeline: RESET (delayed) actor=0x{:08X} scriptKey='{}' now={} at={}",
                              tl.event.actor.formID, tl.scriptKey, _timeSeconds, tl.resetAtSeconds);
 
-                // erase by swap-pop to avoid O(n)
                 _activeTimelines[i] = std::move(_activeTimelines.back());
                 _activeTimelines.pop_back();
-                continue;  // i stays same to process swapped-in element
+                continue;
             }
 
-            // Not time yet: do not fire commands; just move on.
             ++i;
             continue;
         }
 
-        // Find script commands for this timeline
         const auto itScript = snap->scripts.find(tl.scriptKey);
         if (itScript == snap->scripts.end()) {
-            // Drop timeline if script missing
             if (snap->ResetOnPairEnd) {
                 const float delay = snap->ResetDelay;
 
                 if (delay > 0.0f) {
-                    // Schedule reset and keep timeline around until it fires
                     if (!tl.resetScheduled) {
                         tl.resetScheduled = true;
                         tl.resetAtSeconds = _timeSeconds + static_cast<double>(delay);
@@ -509,37 +397,33 @@ void FBUpdate::Tick(float dtSeconds) {
                             tl.scriptKey, tl.event.actor.formID, delay, tl.resetAtSeconds);
                     }
 
-                    // IMPORTANT: do NOT erase timeline yet; advance i to avoid spin
                     ++i;
                     continue;
                 }
 
-                // Immediate reset on drop
+                CancelTweensForActor(_activeTweens, _lastMorphValue, tl.event.actor.formID);
                 ApplyReset(tl);
             }
 
             spdlog::info("[FB] Timeline: DROP missing scriptKey='{}'", tl.scriptKey);
 
-            // erase by swap-pop to avoid O(n)
             _activeTimelines[i] = std::move(_activeTimelines.back());
             _activeTimelines.pop_back();
-            continue;  // i stays same to process swapped-in element
+            continue;
         }
 
         const auto& timed = itScript->second;
 
-        // If commands complete, do NOT spin; just move on.
         if (tl.nextIndex >= timed.size()) {
             if (!tl.commandsComplete) {
                 tl.commandsComplete = true;
                 spdlog::info("[FB] Timeline: COMPLETE (waiting PairEnd) actor=0x{:08X} scriptKey='{}' elapsed={}",
                              tl.event.actor.formID, tl.scriptKey, tl.elapsed);
             }
-            ++i;  // CRITICAL: advance!
+            ++i;
             continue;
         }
 
-        // Fire due commands (must advance nextIndex!)
         while (tl.nextIndex < timed.size() && tl.elapsed >= timed[tl.nextIndex].time) {
             const auto& cmd = timed[tl.nextIndex].command;
 
@@ -549,75 +433,114 @@ void FBUpdate::Tick(float dtSeconds) {
                 timed.size(), static_cast<std::uint32_t>(cmd.type), cmd.opcode);
 
             CaptureOriginalScaleIfNeeded(tl, cmd);
-            CaptureOriginalTranslateIfNeeded(tl, cmd);
-            FB::Exec::Execute_MainThread(cmd, tl.event);
+            bool consumedByTween = false;
 
+            float parsedValue = 0.0f;
+            bool parsedValueOK = false;
+            {
+                char* end = nullptr;
+                parsedValue = std::strtof(cmd.args.c_str(), &end);
+                parsedValueOK = (end != cmd.args.c_str());
+            }
 
-            if (cmd.type == FBCommandType::Transform && cmd.opcode == "Move") {
-                float x = 0.0f, y = 0.0f, z = 0.0f;
-                // Use same parsing logic as Exec: reuse std::strtof minimal parse
-                // (Keep it local like your Morph sustain block does.)
-                {
-                    // Parse first three comma-separated floats
-                    std::string s = cmd.args;
-                    const char* p = s.c_str();
-                    char* end = nullptr;
+            if (parsedValueOK) {
+                if (cmd.type == FBCommandType::Transform && cmd.opcode == "Scale") {
+                    float tweenDur = cmd.tween.duration;
+                    if (tweenDur <= 0.0f && !cmd.tween.hasTween && snap->DefaultTweenScale > 0.0f) {
+                        tweenDur = snap->DefaultTweenScale;
+                    }
 
-                    x = std::strtof(p, &end);
-                    if (end == p) {
-                        spdlog::warn("[FB] Sustain: failed to parse move x args='{}' node='{}'", cmd.args, cmd.target);
-                    } else {
-                        p = end;
-                        while (*p == ',' || *p == ' ' || *p == '\t') ++p;
-                        y = std::strtof(p, &end);
-                        if (end == p) {
-                            spdlog::warn("[FB] Sustain: failed to parse move y args='{}' node='{}'", cmd.args,
-                                         cmd.target);
-                        } else {
-                            p = end;
-                            while (*p == ',' || *p == ' ' || *p == '\t') ++p;
-                            z = std::strtof(p, &end);
-                            if (end == p) {
-                                spdlog::warn("[FB] Sustain: failed to parse move z args='{}' node='{}'", cmd.args,
-                                             cmd.target);
-                            } else {
-                                const std::string_view resolvedSV = FB::Maps::ResolveNode(cmd.target);
-                                const std::string nodeName(resolvedSV);  // owning key
+                    const bool wantsTween = (tweenDur > 0.0f);
+                    if (wantsTween) {
+                        const std::string_view node = FB::Maps::ResolveNode(cmd.target);
 
-                                const std::array<float, 3> vec{x, y, z};
+                        ActiveTween tw;
+                        tw.event = tl.event;
+                        tw.role = cmd.role;
+                        tw.type = FBCommandType::Transform;
+                        tw.channelKey = "Scale|" + std::string(node);
+                        tw.target = std::string(node);
+                        tw.startTimeSeconds = _timeSeconds + cmd.tween.delay;
+                        tw.durationSeconds = tweenDur;
+                        tw.startValue = 1.0f;  // captured later at actual tween start
+                        tw.endValue = parsedValue;
+                        tw.easing = cmd.tween.easing;
+                        tw.generation = snap->generation;
+                        tw.startCaptured = false;
 
-                                if (cmd.role == ActorRole::Caster) {
-                                    tl.sustainTranslateCaster[nodeName] = vec;
-                                    tl.sustainTranslateBaseCaster.erase(nodeName);  // if still present
-                                    tl.sustainTranslateLastAppliedCaster.erase(nodeName);
-                                } else if (cmd.role == ActorRole::Target) {
-                                    tl.sustainTranslateTarget[nodeName] = vec;
-                                    tl.sustainTranslateBaseTarget.erase(nodeName);  // if still present
-                                    tl.sustainTranslateLastAppliedTarget.erase(nodeName);
-                                }
-                            }
+                        auto key = MakeTweenKey(tl.event.actor.formID, cmd.role, tw.channelKey);
+                        _activeTweens[key] = tw;
+
+                        consumedByTween = true;
+
+                        spdlog::info("[FB] Tween: create scale actor=0x{:08X} role={} node='{}' end={} dur={} delay={}",
+                                     tl.event.actor.formID, (cmd.role == ActorRole::Target ? "T" : "C"), node,
+                                     parsedValue, tweenDur, cmd.tween.delay);
+                    }
+                } else if (cmd.type == FBCommandType::Morph) {
+                    float tweenDur = cmd.tween.duration;
+                    if (tweenDur <= 0.0f && !cmd.tween.hasTween && snap->DefaultTweenMorph > 0.0f) {
+                        tweenDur = snap->DefaultTweenMorph;
+                    }
+
+                    const std::string morph = std::string(FB::Maps::ResolveMorph(cmd.target));
+
+                    if (tweenDur > 0.0f) {
+                        const auto cacheKey = MakeMorphCacheKey(tl.event.actor.formID, cmd.role, morph);
+
+                        ActiveTween tw;
+                        tw.event = tl.event;
+                        tw.role = cmd.role;
+                        tw.type = FBCommandType::Morph;
+                        tw.channelKey = "Morph|" + morph;
+                        tw.target = morph;
+                        tw.startTimeSeconds = _timeSeconds + cmd.tween.delay;
+                        tw.durationSeconds = tweenDur;
+                        tw.startValue = 0.0f;
+                        tw.endValue = parsedValue;
+                        tw.easing = cmd.tween.easing;
+                        tw.generation = snap->generation;
+                        tw.startCaptured = true;
+
+                        auto itCache = _lastMorphValue.find(cacheKey);
+                        if (itCache != _lastMorphValue.end()) {
+                            tw.startValue = itCache->second;
                         }
+
+                        auto key = MakeTweenKey(tl.event.actor.formID, cmd.role, tw.channelKey);
+                        _activeTweens[key] = tw;
+
+                        consumedByTween = true;
+
+                        spdlog::info(
+                            "[FB] Tween: create morph actor=0x{:08X} role={} morph='{}' start={} end={} dur={} "
+                            "delay={}",
+                            tl.event.actor.formID, (cmd.role == ActorRole::Target ? "T" : "C"), morph, tw.startValue,
+                            parsedValue, tweenDur, cmd.tween.delay);
                     }
                 }
             }
 
+            if (!consumedByTween) {
+                FB::Exec::Execute_MainThread(cmd, tl.event);
+            }
 
             if (cmd.type == FBCommandType::Morph) {
                 const std::string_view resolvedSV = FB::Maps::ResolveMorph(cmd.target);
-                const std::string morphName(resolvedSV);  // owning key
+                const std::string morphName(resolvedSV);
 
-                // Parse cmd.args as float
                 float v = 0.0f;
                 {
-                    // minimal local parse (no dependency on FBExec helpers)
                     std::string tmp(cmd.args);
                     char* end = nullptr;
                     v = std::strtof(tmp.c_str(), &end);
                     if (end == tmp.c_str()) {
                         spdlog::warn("[FB] Sustain: failed to parse morph value args='{}' morph='{}'", cmd.args,
                                      morphName);
-                        // don't record sustain if we can't parse
                     } else {
+                        const auto cacheKey = MakeMorphCacheKey(tl.event.actor.formID, cmd.role, morphName);
+                        _lastMorphValue[cacheKey] = v;
+
                         if (cmd.role == ActorRole::Caster) {
                             tl.sustainMorphsCaster[morphName] = v;
                         } else if (cmd.role == ActorRole::Target) {
@@ -627,12 +550,63 @@ void FBUpdate::Tick(float dtSeconds) {
                 }
             }
 
-
-
-
-            ++tl.nextIndex;  // CRITICAL: progress!
+            ++tl.nextIndex;
         }
 
-        ++i;  // CRITICAL: advance!
+        ++i;
+    }
+
+    // 4) Evaluate active tweens
+    for (auto it = _activeTweens.begin(); it != _activeTweens.end();) {
+        auto& tw = it->second;
+
+        if (tw.generation != snap->generation) {
+            it = _activeTweens.erase(it);
+            continue;
+        }
+
+        if (_timeSeconds < tw.startTimeSeconds) {
+            ++it;
+            continue;
+        }
+
+        RE::Actor* actor = FB::Actors::ResolveActorForEvent(tw.event, tw.role);
+        if (!actor) {
+            ++it;
+            continue;
+        }
+
+        if (tw.type == FBCommandType::Transform && !tw.startCaptured) {
+            float s = 1.0f;
+            if (FBTransform::TryGetScale(actor, tw.target, s)) {
+                tw.startValue = s;
+            } else {
+                tw.startValue = 1.0f;
+            }
+            tw.startCaptured = true;
+        }
+
+        float t = 1.0f;
+        if (tw.durationSeconds > 0.0f) {
+            t = Clamp01((_timeSeconds - tw.startTimeSeconds) / tw.durationSeconds);
+        }
+
+        const float eased = ApplyEasing(tw.easing, t);
+        const float v = Lerp(tw.startValue, tw.endValue, eased);
+
+        if (tw.type == FBCommandType::Transform) {
+            FBTransform::ApplyScale_MainThread(actor, tw.target, v);
+        } else if (tw.type == FBCommandType::Morph) {
+            FB::Morph::Set(actor, tw.target, v);
+
+            const auto cacheKey = MakeMorphCacheKey(tw.event.actor.formID, tw.role, tw.target);
+            _lastMorphValue[cacheKey] = v;
+        }
+
+        if (t >= 1.0f) {
+            it = _activeTweens.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
