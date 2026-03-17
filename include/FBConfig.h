@@ -12,9 +12,12 @@ struct Snapshot {
     Generation generation = 0;
     bool ResetOnPairEnd = false;
     float ResetDelay = 0.0f;
-
+    float DefaultTweenScale = 0.0f;
+    float DefaultTweenMorph = 0.0f;
     std::unordered_map<std::string, std::string> eventMap;
     std::unordered_map<std::string, TimedCommandList> scripts;
+    bool SwapCasterTarget = false;
+
 };
 
 
