@@ -1,0 +1,136 @@
+Intent
+[ ] Implement timeline-triggered custom sound effects for Full Bodied Animation, using the existing INI/timeline execution model just like Transform and Morph.
+[ ] First version should support immediate one-shot sound playback at specific timestamps.
+[ ] Sound playback should be actor-associated and Skyrim-native, not raw file-path playback.
+
+Constraints / Non-Negotiables
+[ ] The Top Level Checklist remains the source of truth.
+[ ] Do NOT introduce a new timing system. FBUpdatePump / FBUpdate remain the only timing path.
+[ ] FBFx owns sound playback only. No timing state inside FBFx.
+[ ] FBConfig parses sound commands only.
+[ ] FBExec routes sound commands only.
+[ ] Keep diffs tight and localized.
+[ ] First version should prioritize stability and Skyrim-native audio behavior over flexibility.
+[ ] Do NOT begin with direct arbitrary audio file playback from ini.
+[ ] Prefer friendly sound keys that resolve to Skyrim sound records / descriptors.
+
+Recommended First-Version Behavior
+[ ] Support INI syntax like FBFx_Play(MySoundKey)
+[ ] Execute immediately when timestamp is reached
+[ ] Resolve actor by existing role rules (Caster / Target)
+[ ] Play a predefined Skyrim sound associated with that key
+[ ] Let Skyrim’s own sound setup determine routing to the Effects slider, attenuation, and 2D/3D behavior
+
+Skyrim Sound Setup Notes
+[ ] Author/edit source sounds as WAV for convenience
+[ ] Convert/package sounds in a Skyrim-appropriate format as needed for final assets
+[ ] Prefer creating proper Skyrim sound records / descriptors in plugin data rather than referencing loose file paths directly from code
+[ ] Route sounds to the Effects slider by configuring the sound’s category/output correctly in CK/xEdit
+[ ] This is primarily a data-record setup concern, not something to hardcode in FBUpdate or FBExec
+
+Architectural Placement (Where Code Must Live)
+[ ] FBStructs / existing command structs: no major structural refactor needed beyond using FBCommandType::Fx
+[ ] FBConfig: parse FBFx_Play(...)
+[ ] FBExec: route Fx Play commands to FBFx
+[ ] FBFx: resolve sound key and play the sound
+[ ] FBUpdate: no special logic needed beyond existing timestamp firing
+[ ] FBMaps or similar optional helper layer may later resolve friendly sound aliases, but do not require this for first milestone unless needed
+
+END OF ASSIGNMENT DESCRIPTION
+
+CHECKLIST
+
+STEP 1 — Define the First-Version Sound Command Contract
+
+[ ] Standardize initial command shape as FBFx_Play(SoundKey)
+[ ] Treat SoundKey as a friendly identifier, not a raw filesystem path
+[ ] Decide first-version playback scope:
+[ ] actor-associated playback
+[ ] immediate one-shot only
+[ ] no tweening
+[ ] no looping
+[ ] no fade system
+[ ] Stop condition: one example command can be parsed and explained end-to-end on paper
+
+STEP 2 — Define the Data Side in Skyrim Terms
+
+[ ] Create one or more custom Skyrim sound records/descriptors for testing
+[ ] Ensure the chosen sound setup is categorized like a normal sound effect
+[ ] Verify the sound is routed to the Effects slider through sound record/category setup
+[ ] Confirm the sound asset actually plays in game outside the FBA system if tested manually
+[ ] Stop condition: at least one known-good test sound exists in plugin data and is suitable for Effects-slider playback
+
+STEP 3 — Extend FBConfig Parsing for FBFx
+
+[ ] Add parsing support for opcodes beginning with FBFx_
+[ ] First supported command: FBFx_Play(...)
+[ ] Parse the argument as the sound key
+[ ] Populate:
+[ ] cmd.type = FBCommandType::Fx
+[ ] cmd.opcode = "Play"
+[ ] cmd.target = sound key
+[ ] cmd.args = empty for v1 unless future options are added
+[ ] Add debug logging showing parsed fx commands
+[ ] Stop condition: logs confirm FBFx_Play(TestSound) is being parsed into timeline commands correctly
+
+STEP 4 — Route Fx Commands Through FBExec
+
+[ ] In FBExec::Execute, add handling for:
+[ ] cmd.type == FBCommandType::Fx
+[ ] cmd.opcode == "Play"
+[ ] Resolve actor using existing FB::Actors::ResolveActorForEvent(ctxEvent, cmd.role)
+[ ] Call FBFx::Play(actor, cmd.target)
+[ ] Mirror the same path in Execute_MainThread if needed for consistency with how Tick currently fires commands
+[ ] Do not add timing logic here
+[ ] Stop condition: Fx commands reach FBFx during runtime when their timestamps are hit
+
+STEP 5 — Implement FBFx Playback
+
+[ ] Add a simple interface such as:
+[ ] bool FBFx::Play(RE::Actor* actor, std::string_view soundKey)
+[ ] Resolve soundKey to a known Skyrim sound form / descriptor
+[ ] Play the sound associated with the actor
+[ ] Fail safely if actor is null, 3D is absent when required, or sound lookup fails
+[ ] Add clear debug logs for:
+[ ] sound lookup success/failure
+[ ] actor resolution success/failure
+[ ] play attempt
+[ ] Stop condition: one sound can be triggered successfully from a timed command in a paired animation
+
+STEP 6 — Keep First Version Narrow and Stable
+
+[ ] Do NOT add raw path playback yet
+[ ] Do NOT add volume/pitch/randomization yet
+[ ] Do NOT add node-based placement yet
+[ ] Do NOT add looping or stop commands yet
+[ ] Keep the implementation focused on proving the full pipeline end-to-end
+[ ] Stop condition: sound can be triggered reliably without introducing regressions to tweening, morph, or transform
+
+STEP 7 — Test Matrix
+
+[ ] One caster-side sound plays at a defined timestamp
+[ ] One target-side sound plays at a defined timestamp
+[ ] Sound command does not interfere with transform/morph commands in the same timeline
+[ ] Missing sound key fails gracefully with a useful log
+[ ] Reloading config does not crash or produce stale sound behavior
+[ ] Effects slider affects the sound as expected once record setup is correct
+[ ] Stop condition: all above pass in a single working paired animation test
+
+STEP 8 — Future Expansion Path (Do Not Implement Yet)
+
+[ ] Friendly sound-key mapping table similar to FBMaps
+[ ] Optional syntax extensions:
+[ ] FBFx_Play(SoundKey,volume=0.8)
+[ ] FBFx_PlayAtNode(SoundKey,Head)
+[ ] FBFx_Play2D(SoundKey)
+[ ] Random sound set support
+[ ] Repeated/looping ambient body sounds
+[ ] Stop condition: future ideas are documented, but no extra systems are added prematurely
+
+GPT-TO-GPT WORKING NOTES
+
+[ ] Keep FBFx stateless and immediate
+[ ] Prefer Skyrim-native sound records/descriptors over raw loose file playback
+[ ] Treat Effects-slider routing as a sound record/category setup task, not a timeline task
+[ ] Keep the first implementation small enough that any failure is easy to isolate
+[ ] Preserve the now-working tweening baseline and avoid refactoring unrelated systems
