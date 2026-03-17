@@ -31,6 +31,13 @@ static std::string MakeRoleNodeKey(ActorRole role, std::string_view nodeName) {
     return key;
 }
 
+void FBUpdate::ApplyPostAnimSustainForActor(RE::Actor* actor, std::uint8_t phase) {
+    // Baseline stub: feature intentionally inactive for now.
+}
+
+void FBUpdate::ApplyWorldDataSustainForObject(RE::NiAVObject* object) {
+    // Baseline stub: feature intentionally inactive for now.
+}
 static auto FindActiveTimelineIter(std::vector<ActiveTimeline>& timelines, const FBEvent& e,
                                    const std::string& scriptKey) {
     return std::find_if(timelines.begin(), timelines.end(), [&](const ActiveTimeline& tl) {

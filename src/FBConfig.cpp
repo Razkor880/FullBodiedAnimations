@@ -20,6 +20,52 @@ namespace {
         s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
     }
 
+    static inline void StripInlineComment(std::string& s) { 
+        auto posHash = s.find('#');
+        auto posSemi = s.find(';');
+        auto pos = std::min(posHash == std::string::npos ? s.size() : posHash,
+                            posSemi == std::string::npos ? s.size() : posSemi);
+        if (pos != std::string::npos && pos < s.size()) s.erase(pos);
+    }
+
+    static inline bool IEquals(const std::string& a, const char* b) {
+        if (a.size() != std::strlen(b)) return false;
+        for (size_t i = 0; i < a.size(); i++) {
+            if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
+        }
+        return true;
+    }
+
+    static std::vector<std::filesystem::path> GetGeneralIniCandidates() { 
+    return {std::filesystem::path("Data") / "FullBodiedIni.ini",
+                std::filesystem::path("Data") / "SKSE" / "Plugins" / "FullBodiedIni.ini"};
+    }
+
+    static std::filesystem::path GetOARRoot() {
+        return std::filesystem::path("Data") / "meshes" / "actors" / "character" / "animations" /
+               "OpenAnimationReplacer";
+    }
+
+    static std::optional<std::filesystem::path> FindDirRecursive(const std::filesystem::path& root,
+                                                                 const std::string& dirName) {
+        std::error_code ec;
+        if (!std::filesystem::exists(root, ec)) return std::nullopt;
+
+        for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec)) {
+            if (it->is_directory(ec) && it->path().filename().string() == dirName) {
+                return it->path();
+            }
+        }
+        return std::nullopt;
+    }
+
+    static std::optional<float> ParseFloat(const std::string& s) {
+        char* end = nullptr;
+        float v = std::strtof(s.c_str(), &end);
+        if (end == s.c_str()) return std::nullopt;
+        return v;
+    }
+
     static bool TryParseFloatStrict(std::string_view s, float& out) {
         while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
         while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
@@ -83,52 +129,6 @@ namespace {
         }
 
         return true;
-    }
-
-    static inline void StripInlineComment(std::string& s) { 
-        auto posHash = s.find('#');
-        auto posSemi = s.find(';');
-        auto pos = std::min(posHash == std::string::npos ? s.size() : posHash,
-                            posSemi == std::string::npos ? s.size() : posSemi);
-        if (pos != std::string::npos && pos < s.size()) s.erase(pos);
-    }
-
-    static inline bool IEquals(const std::string& a, const char* b) {
-        if (a.size() != std::strlen(b)) return false;
-        for (size_t i = 0; i < a.size(); i++) {
-            if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
-        }
-        return true;
-    }
-
-    static std::vector<std::filesystem::path> GetGeneralIniCandidates() { 
-    return {std::filesystem::path("Data") / "FullBodiedIni.ini",
-                std::filesystem::path("Data") / "SKSE" / "Plugins" / "FullBodiedIni.ini"};
-    }
-
-    static std::filesystem::path GetOARRoot() {
-        return std::filesystem::path("Data") / "meshes" / "actors" / "character" / "animations" /
-               "OpenAnimationReplacer";
-    }
-
-    static std::optional<std::filesystem::path> FindDirRecursive(const std::filesystem::path& root,
-                                                                 const std::string& dirName) {
-        std::error_code ec;
-        if (!std::filesystem::exists(root, ec)) return std::nullopt;
-
-        for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec)) {
-            if (it->is_directory(ec) && it->path().filename().string() == dirName) {
-                return it->path();
-            }
-        }
-        return std::nullopt;
-    }
-
-    static std::optional<float> ParseFloat(const std::string& s) {
-        char* end = nullptr;
-        float v = std::strtof(s.c_str(), &end);
-        if (end == s.c_str()) return std::nullopt;
-        return v;
     }
 
     static std::string NodeKeyToNiNode(std::string_view key) {
@@ -218,7 +218,6 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                     out.DefaultTweenMorph = 0.0f;
                 }
             }
-
         
         } else if (IEquals(currentSection, "FBFiles")) {
             if (!key.empty() && !val.empty()) {
@@ -374,9 +373,37 @@ static bool BuildSnapshotFromIni(Snapshot& out) {
                 cmd.type = FBCommandType::Transform;
                 cmd.opcode = "Scale";
                 cmd.target = std::string(resolved);  // store owning copy
-                //cmd.target = niNode;  // may be friendly key or full node; Exec will ResolveNode anyway
-                cmd.args = argStr;
+                // cmd.target = niNode;  // may be friendly key or full node; Exec will ResolveNode anyway
+                {
+                    std::string primary;
+                    TweenSpec tween{};
 
+                    if (ParseArgsAndTweenSpec(argStr, primary, tween)) {
+                        cmd.args = primary;
+                        cmd.tween = tween;
+                    } else {
+                        cmd.args = argStr;  // fallback legacy behavior
+                    }
+                }
+            } else if (opAndNode.rfind("FBMove_", 0) == 0) {
+                std::string nodeKey = opAndNode.substr(std::string("FBMove_").size());
+                FBTrimInPlace(nodeKey);
+                const std::string_view resolved = FB::Maps::ResolveNode(nodeKey);
+                cmd.type = FBCommandType::Transform;
+                cmd.opcode = "Move";
+                cmd.target = std::string(resolved);  // store owning copy
+                {
+                    std::string primary;
+                    TweenSpec tween{};
+
+                    if (ParseArgsAndTweenSpec(argStr, primary, tween)) {
+                        cmd.args = primary;
+                        cmd.tween = tween;
+                    } else {
+                        cmd.args = argStr;  // fallback legacy behavior
+                    }
+                }
+                
             } else if (opAndNode.rfind("FBMorph_", 0) == 0) {
                 std::string morphKey = opAndNode.substr(std::string("FBMorph_").size());
                 FBTrimInPlace(morphKey);
