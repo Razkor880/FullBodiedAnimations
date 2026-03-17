@@ -32,6 +32,7 @@ enum class FBCommandType : std::uint8_t
 
 struct TweenSpec 
 {
+    bool hasTween = false;  // true only if tween= was explicitly present
     float duration = 0.0f; //seconds
     float delay = 0.0f; //seconds
     Easing easing = Easing::Linear;

@@ -16,8 +16,6 @@ struct Snapshot {
     float DefaultTweenMorph = 0.0f;
     std::unordered_map<std::string, std::string> eventMap;
     std::unordered_map<std::string, TimedCommandList> scripts;
-    bool SwapCasterTarget = false;
-
 };
 
 
