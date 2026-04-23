@@ -1,0 +1,451 @@
+Intent
+
+Create a new implementation guide for adding a Devourment integration adapter to Full Bodied Animation, with the adapter translating Devourment swallow-related mod events into neutral internal Full Bodied triggers. The goal is to keep Devourment external, preserve Full Bodied as the animation/timeline engine, minimize churn to working systems, and leave a clean seam for future integrations such as Tasting Tamriel.
+
+Constraints
+
+Do not patch or modify Devourment core as the primary strategy.
+Do not remove or replace the existing animation-graph event pipeline yet.
+Do not force Devourment-specific assumptions deep into Full Bodied core systems.
+Keep changes modular and easy to back out.
+Prefer additive changes over refactors unless a small refactor clearly reduces long-term complexity.
+The first supported case should be narrow: successful Devourment swallow, oral/stomach locus, humanoid predator and prey, non-endo.
+Logging should be explicit and easy to grep, using a dedicated integration prefix.
+Config should remain the source of truth for mapping external triggers to timeline/script keys.
+Do not implement speculative support for Tasting Tamriel yet, but preserve a clean future seam for it.
+Do not make unapproved architectural leaps beyond the scope of this assignment.
+
+Scope
+
+This assignment covers:
+
+introducing a neutral internal external-trigger model
+adding a Devourment integration module
+plumbing a dedicated external-trigger queue into the update loop
+adding config parsing for Devourment trigger mapping
+starting a timeline from a normalized Devourment swallow trigger
+building logging and checkpoints around the above
+
+This assignment does not cover:
+
+broad Devourment feature coverage
+patching Devourment plugin records
+restoring removed Devourment paired-idle architecture
+adding Tasting Tamriel integration now
+implementing every possible locus/endo/creature case in the first pass
+
+Checklist authority
+
+The checklist below is the source of truth for implementation order, checkpoints, and stop conditions. If code and notes disagree, follow the checklist.
+
+END OF ASSIGNMENT DESCRIPTION
+
+CHECKLIST
+
+STEP 1 - Add neutral external trigger types in FBStructs
+
+[ ] Add a new enum for trigger source, with at least:
+
+AnimationGraph
+Devourment
+External
+
+[ ] Add a new enum for trigger kind, with at least:
+
+AnimationTag
+VoreSwallowAttempt
+VoreSwallowSuccess
+VoreEscape
+Custom
+
+[ ] Add a new struct for neutral triggers, tentatively named FBTrigger, containing only plain, serializable data:
+
+source
+kind
+tag or normalized key string
+actorA form ID
+actorB form ID
+success bool
+endo bool
+locus int
+optional aux string or aux int if useful
+retries byte if needed for parity with existing event handling
+
+[ ] Keep existing FBEvent unchanged for now.
+
+[ ] Do not rename working systems yet unless there is a compelling compile-time reason.
+
+Checkpoint
+[ ] Code compiles after adding the new enums/struct with no behavior changes.
+
+Stop condition
+
+Stop if adding the new trigger model causes naming churn across unrelated modules. Contain the change.
+
+STEP 2 - Add a dedicated external-trigger queue to the update layer
+
+[ ] In FBUpdate, add a dedicated queue for FBTrigger objects.
+[ ] Add a small enqueue helper, such as EnqueueExternalTrigger(const FBTrigger&).
+[ ] Guard the queue with the same safety/locking pattern used for existing event queues.
+[ ] Drain this queue in Tick at a deterministic location.
+[ ] Do not merge it into the legacy animation-event queue yet.
+
+Recommended Tick order
+[ ] Drain animation graph events
+[ ] Drain external triggers
+[ ] Start timelines for newly accepted triggers
+[ ] Advance active timelines
+[ ] Apply sustain/reset logic as usual
+
+[ ] Add explicit logs for enqueued and drained external triggers.
+
+Checkpoint
+[ ] Build succeeds.
+[ ] Existing animation-graph event behavior is unchanged.
+[ ] Enqueuing a test FBTrigger produces visible logs during Tick.
+
+Stop condition
+
+Stop if this step begins requiring a broad rewrite of FBUpdate logic. Keep intake additive.
+
+STEP 3 - Introduce normalized trigger-to-script mapping in config
+
+[ ] Add a new dedicated config section for Devourment mappings, rather than overloading the existing animation EventMap immediately.
+
+Recommended shape
+
+[DevourmentEventMap]
+SwallowSuccess_Stomach = devourment_human_oral
+SwallowSuccess_Anal = devourment_human_anal
+SwallowSuccess_Endo_Stomach = devourment_human_endo_oral
+
+[ ] Parse this new section in FBConfig.
+[ ] Store the results in a dedicated map on the snapshot, such as devourmentEventMap.
+[ ] Keep current eventMap untouched.
+
+[ ] Normalize Devourment raw event payloads into a small set of config keys instead of baking all logic into C++ strings everywhere.
+
+Recommended first normalized key
+
+SwallowSuccess_Stomach
+
+[ ] If useful, document the normalization rule in a short comment near the parser or integration layer.
+
+Checkpoint
+[ ] Config reload succeeds with and without the new section present.
+[ ] Missing DevourmentEventMap section is handled gracefully.
+[ ] Parsed mappings appear in logs or debug dump.
+
+Stop condition
+
+Stop if parser changes start destabilizing unrelated config sections.
+
+STEP 4 - Add FBIntegrationDevourment module skeleton
+
+[ ] Create new files:
+
+FBIntegrationDevourment.h
+FBIntegrationDevourment.cpp
+
+[ ] Give the module a narrow responsibility:
+
+initialize registration/listening
+receive Devourment events
+validate payload
+normalize payload into FBTrigger
+enqueue FBTrigger into FBUpdate
+
+[ ] Keep Devourment-specific logic isolated to this module as much as possible.
+
+[ ] Add dedicated logging prefix:
+
+[FB][DVT]
+
+[ ] Add Initialize() and Shutdown() style entry points if that matches current project conventions.
+
+[ ] Do not let this module directly execute timelines, transforms, morphs, or FX.
+
+Checkpoint
+[ ] Module compiles and links.
+[ ] Initialization log appears at startup when the plugin loads.
+
+Stop condition
+
+Stop if the module begins depending on low-level transform/morph internals. It should be an adapter, not an executor.
+
+STEP 5 - Decide and implement the listening mechanism
+
+[ ] Determine the cleanest real listening mechanism for Devourment mod events in your stack.
+[ ] Prefer the mechanism that best matches actual engine/runtime constraints, not the prettiest architecture on paper.
+
+Target event for first pass
+
+Devourment_onSwallow
+
+Payload, per modder docs
+
+pred
+prey
+endo
+locus
+
+[ ] Implement only the first event initially.
+[ ] Leave obvious extension points for:
+
+Devourment_onSwallowAttempt
+Devourment_onEscape
+
+[ ] If the listener layer must involve a Papyrus bridge, keep that bridge very small and dedicated to forwarding external mod events into Full Bodied.
+
+[ ] If the listener can be handled entirely in the current native/plugin setup, prefer that.
+
+Checkpoint
+[ ] A real Devourment swallow produces a log entry in Full Bodied.
+[ ] The log clearly shows predator, prey, endo flag, and locus.
+
+Stop condition
+
+Stop if the chosen listening strategy starts ballooning into a full scripting subsystem. Re-evaluate and simplify.
+
+STEP 6 - Normalize Devourment payload into FBTrigger
+
+[ ] In FBIntegrationDevourment, map the raw Devourment_onSwallow payload into a neutral FBTrigger.
+
+For the first pass:
+[ ] source = Devourment
+[ ] kind = VoreSwallowSuccess
+[ ] actorA = predator
+[ ] actorB = prey
+[ ] success = true
+[ ] endo = payload endo
+[ ] locus = payload locus
+[ ] tag/key = normalized config-facing key
+
+Normalization rule for first pass
+[ ] If endo == false and locus == 0, normalize to SwallowSuccess_Stomach
+[ ] Ignore all other cases for now with an explicit log
+
+[ ] Validate:
+
+predator exists
+prey exists
+predator != prey
+both form IDs valid
+
+[ ] Add a helper such as IsSupportedFirstPassCase() to keep branching readable.
+
+Checkpoint
+[ ] Successful human oral swallow enqueues a normalized FBTrigger.
+[ ] Unsupported cases are logged and ignored cleanly.
+
+Stop condition
+
+Stop if this logic begins expanding into a giant switchboard. Keep first pass narrow.
+
+STEP 7 - Drain external trigger and map it to a timeline
+
+[ ] In FBUpdate’s trigger-drain path, add handling for FBTrigger.
+[ ] Read the current config snapshot.
+[ ] If trigger.source == Devourment and trigger.kind == VoreSwallowSuccess, use the normalized key to look up the script key in snapshot->devourmentEventMap.
+[ ] If no mapping exists, log and ignore.
+[ ] If mapping exists, start the corresponding timeline using the same core timeline-start path used elsewhere.
+
+[ ] Reuse existing ActiveTimeline structure if practical.
+[ ] Do not create a second parallel timeline system.
+
+[ ] Preserve actor-role clarity.
+Recommended interpretation for first pass:
+
+actorA = caster/predator
+actorB = target/prey
+
+Checkpoint
+[ ] A mapped Devourment swallow starts a timeline.
+[ ] Timeline START log includes enough data to confirm the source was Devourment.
+
+Stop condition
+
+Stop if timeline startup for external triggers requires invasive rewrites of working timeline code. Add a small adapter layer instead.
+
+STEP 8 - Add a debug-only first-pass timeline script key
+
+[ ] Create a minimal test mapping in config, for example:
+
+SwallowSuccess_Stomach = devourment_test
+
+[ ] Create a minimal script/timeline for that key that does something harmless and obvious.
+Examples:
+
+log-only command path if available
+small sound effect
+safe morph nudge
+safe scale pulse on predator or prey
+
+[ ] Use this to validate the full pipeline before attempting actual paired animation launch.
+
+Checkpoint
+[ ] In game, a Devourment swallow triggers the mapped Full Bodied timeline reliably.
+[ ] Logs prove the chain end to end:
+
+Devourment event received
+trigger normalized
+trigger enqueued
+trigger drained
+script key resolved
+timeline started
+command fired
+
+Stop condition
+
+Stop if the event-to-timeline path is not reliable yet. Do not add paired animation launch before this is stable.
+
+STEP 9 - Keep the paired-animation seam clean for later implementation
+
+[ ] Once the event-to-timeline path works, reserve the first timeline command slot or design seam where paired animation launch will later live.
+[ ] Do not hardwire Devourment-specific paired playback logic into the adapter.
+[ ] The adapter should only start a neutral Full Bodied timeline.
+[ ] The timeline/execution layer can later gain a “play paired animation” capability used by Devourment and future integrations alike.
+
+[ ] Add a short comment or note in code that this seam is intended for later animation playback support.
+
+Checkpoint
+[ ] Architecture clearly separates:
+
+trigger reception
+trigger normalization
+timeline start
+future animation execution
+
+Stop condition
+
+Stop if paired animation implementation starts getting mixed into the Devourment listener module.
+
+STEP 10 - Initialization and lifecycle wiring
+
+[ ] Initialize FBIntegrationDevourment at the same stage where other runtime systems are brought online.
+[ ] Ensure initialization waits until it is safe relative to config load and any required interfaces.
+[ ] Add shutdown/unregister behavior if needed by the chosen listening mechanism.
+
+[ ] Keep startup logs clear:
+
+config loaded
+update system ready
+Devourment integration ready
+
+Checkpoint
+[ ] Plugin startup is clean.
+[ ] No duplicate registration logs.
+[ ] No swallow events are missed after normal load into game.
+
+Stop condition
+
+Stop if init order becomes fragile. Adjust ordering, do not paper over it with arbitrary delays unless absolutely necessary.
+
+STEP 11 - Logging and diagnostics polish
+
+[ ] Add consistent logs under [FB][DVT] for:
+
+integration init
+raw event received
+unsupported case ignored
+trigger normalized
+trigger enqueued
+trigger drained
+config mapping miss
+timeline started
+
+[ ] Keep logs compact but specific enough for game testing.
+
+Recommended examples
+
+[FB][DVT] onSwallow pred=0x... prey=0x... endo=0 locus=0
+[FB][DVT] normalized key=SwallowSuccess_Stomach
+[FB][DVT] enqueued external trigger pred=0x... prey=0x...
+[FB][DVT] mapping key=SwallowSuccess_Stomach -> script=devourment_test
+[FB][DVT] unsupported swallow case ignored endo=1 locus=3
+
+Checkpoint
+[ ] A full test session is readable from logs without guesswork.
+
+Stop condition
+
+Stop if logs become spammy enough to obscure normal debugging. Reduce frequency, not clarity.
+
+STEP 12 - First-pass in-game validation
+
+[ ] Validate startup with Devourment installed and Full Bodied installed.
+[ ] Validate that a normal Devourment oral swallow between supported humanoids fires the integration.
+[ ] Validate that unsupported cases are ignored and do not break Devourment.
+[ ] Validate that Devourment gameplay still proceeds normally even if Full Bodied ignores or fails a trigger.
+[ ] Validate save/load does not produce duplicate trigger registration.
+
+Checkpoint
+[ ] Vertical slice works:
+
+Devourment swallow
+Full Bodied receives it
+normalized trigger maps to a timeline
+timeline executes
+Devourment continues its own systems normally
+
+Stop condition
+
+Stop before broadening scope. Do not add anal/endo/creature support until this vertical slice is proven.
+
+STEP 13 - Only after vertical slice success, broaden scope carefully
+
+[ ] Add optional support for:
+
+endo stomach
+anal
+escape
+swallow attempt
+creature cases
+
+[ ] Add one case at a time.
+[ ] Keep config-driven mapping as source of truth.
+[ ] Preserve the neutral trigger model.
+
+Checkpoint
+[ ] Each added case has explicit logs and a testable mapping.
+
+Stop condition
+
+Stop if new cases require breaking the neutral model. Revisit the abstraction instead.
+
+STEP 14 - Notes for future Tasting Tamriel support
+
+[ ] Do not implement TT now.
+[ ] Leave code comments or minimal notes indicating:
+
+new external integrations should live in their own adapter modules
+they should emit FBTrigger, not bypass the core
+they should use config-driven mapping when possible
+
+[ ] Keep Devourment event names isolated to FBIntegrationDevourment.
+
+Checkpoint
+[ ] No Devourment-specific raw event strings are scattered through unrelated core files.
+
+Stop condition
+
+Stop if future-proofing starts turning into speculative architecture. Keep it light.
+
+FINAL ACCEPTANCE CRITERIA
+
+[ ] Existing Full Bodied animation-graph event behavior still works
+[ ] Devourment successful stomach swallow can produce a Full Bodied trigger
+[ ] Trigger maps to a timeline through config
+[ ] First-pass supported case works without patching Devourment core
+[ ] Devourment-specific logic is isolated to the adapter layer
+[ ] Internal trigger model remains neutral enough for future integrations
+[ ] Logs are good enough to debug live in game
+
+IMPLEMENTATION NOTES
+
+Prefer narrow, reversible changes.
+Preserve current naming unless a new neutral name is clearly better.
+Do not silently repurpose old fields if adding a new field is clearer.
+Avoid speculative abstractions beyond what this assignment needs.
+If the real listener mechanism forces a small Papyrus bridge, keep it tiny and purpose-built.
+If any core assumption proves false during implementation, stop and document the mismatch rather than improvising a deep rewrite.
