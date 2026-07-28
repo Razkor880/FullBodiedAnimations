@@ -81,7 +81,7 @@ static void CaptureOriginalScaleIfNeeded(ActiveTimeline& tl, const FBCommand& cm
 }
 
 static void ApplySustain(ActiveTimeline& tl, float nowSeconds) {
-    // Throttle: 10 Hz is usually plenty for “win the tug-of-war” without spamming Papyrus.
+    // Throttle: 10 Hz is usually plenty for ï¿½win the tug-of-warï¿½ without spamming Papyrus.
     constexpr float kSustainInterval = 0.10f;
 
     if (nowSeconds < tl.nextSustainAtSeconds) {
@@ -267,16 +267,27 @@ void FBUpdate::Tick(float dtSeconds) {
 
         const auto& eventTag = e.tag;
 
-        const auto mapIt = snap->eventMap.find(eventTag);
-        if (mapIt == snap->eventMap.end()) {
-            spdlog::info("[FB] Tick: event '{}' actor=0x{:08X} -> no mapping", eventTag, e.actor.formID);
+        // PIE migration: new tag format is "FB:scriptKey" or "FB_PAIR_END:scriptKey"
+        // Extract the script key from the tag
+        std::string scriptKey;
+        bool isPairEnd = false;
+
+        if (eventTag.starts_with("FB_PAIR_END:")) {
+            // Extract script key after "FB_PAIR_END:"
+            scriptKey = eventTag.substr(std::string("FB_PAIR_END:").size());
+            isPairEnd = true;
+        } else if (eventTag.starts_with("FB:")) {
+            // Extract script key after "FB:"
+            scriptKey = eventTag.substr(std::string("FB:").size());
+            isPairEnd = false;
+        } else {
+            // Not a FullBodied event
+            spdlog::info("[FB] Tick: event '{}' actor=0x{:08X} -> not a FullBodied event", eventTag, e.actor.formID);
             continue;
         }
 
-        const auto& scriptKey = mapIt->second;
-
         // PairEnd is a clip-end marker: close an existing timeline, do NOT start/reset immediately.
-        if (e.tag == "PairEnd") {
+        if (isPairEnd) {
             auto it = FindActiveTimelineIter(_activeTimelines, e, scriptKey);
             if (it != _activeTimelines.end()) {
                 if (snap->ResetOnPairEnd) {

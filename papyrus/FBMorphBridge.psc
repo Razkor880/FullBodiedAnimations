@@ -13,7 +13,8 @@ Function FBSetMorph(Actor akActor, String morphName, Float value) Global
     NiOverride.SetBodyMorph(akActor, morphName, FBKey(), value)
     NiOverride.ApplyMorphs(akActor)
     NiOverride.UpdateModelWeight(akActor)
-
+    
+    Debug.Trace("[FB] FBSetMorph: set morph '" + morphName + "' = " + value + " on actor 0x" + akActor.GetFormID() as string)
 EndFunction
 
 ; NOTE: name matches kFnClear = "FBClearMorph"
@@ -25,4 +26,6 @@ Function FBClearMorph(Actor akActor, String morphName) Global
     NiOverride.ClearBodyMorph(akActor, morphName, FBKey())
     NiOverride.ApplyMorphs(akActor)
     NiOverride.UpdateModelWeight(akActor)
+    
+    Debug.Trace("[FB] FBClearMorph: cleared morph '" + morphName + "' on actor 0x" + akActor.GetFormID() as string)
 EndFunction
