@@ -6,6 +6,8 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <spdlog/spdlog.h>
+#include "FBTimelineState.h"
 
 using Generation = std::uint64_t;
 
@@ -85,17 +87,18 @@ struct ActiveTimeline
 {
     FBEvent event;
     std::string scriptKey;
+    TimelineState state = TimelineState::Idle;  // Replaces boolean flags
     float elapsed = 0.0f;
     std::size_t nextIndex = 0;
     std::uint64_t generation = 0;
     std::unordered_map<std::string, float> originalScale;
     std::unordered_map<std::string, std::array<float, 3>> originalTranslate;
-    bool commandsComplete = false;
     float startTimeSeconds = 0.0f;
-    bool resetScheduled = false;
+    
+    // Reset scheduling
     double resetAtSeconds = 0.0;
-    bool touchedMorphCaster = false;
-    bool touchedMorphTarget = false;
+    
+    // Morph tracking
     std::unordered_set<std::string> touchedMorphsCaster;
     std::unordered_set<std::string> touchedMorphsTarget;
     std::unordered_map<std::string, float> sustainMorphsCaster;
@@ -108,14 +111,30 @@ struct ActiveTimeline
     // Per-frame base pose cache captured in phase 0 (so later phases don't double-add).
     std::unordered_map<std::string, std::array<float, 3>> sustainTranslateBaseCaster;
     std::unordered_map<std::string, std::array<float, 3>> sustainTranslateBaseTarget;
-    // optional throttle so we don't spam Papyrus every frame
+    
+    // Optional throttle so we don't spam Papyrus every frame
     float nextSustainAtSeconds = 0.0f;
 
     // Additive sustain support: last value we applied (to detect double-apply and derive base).
     std::unordered_map<std::string, std::array<float, 3>> sustainTranslateLastAppliedCaster;
     std::unordered_map<std::string, std::array<float, 3>> sustainTranslateLastAppliedTarget;
 
+    // Helper to check if timeline can transition to a new state
+    [[nodiscard]] bool CanTransitionTo(TimelineState newState) const {
+        return FB::Timeline::CanTransition(state, newState);
+    }
 
+    // Helper to safely transition to a new state (asserts if invalid)
+    void TransitionTo(TimelineState newState) {
+        if (!CanTransitionTo(newState)) {
+            // Log error but don't crash
+            spdlog::error("[FB] Invalid state transition: {} -> {}", 
+                         FB::Timeline::StateToString(state), 
+                         FB::Timeline::StateToString(newState));
+            return;
+        }
+        state = newState;
+    }
 };
 
 using FBCommandList = std::vector<FBCommand>;
