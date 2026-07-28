@@ -199,37 +199,42 @@ namespace FB::Morph {
 
 
     void Clear(RE::Actor* actor, std::string_view morphName) {
-
-            Clear_MainThread(actor, morphName);
+       if (!actor || morphName.empty()) {
+           return;
         }
-    //    if (!actor || morphName.empty()) {
-     //       return;
-      //  }
 
-    //    auto* task = SKSE::GetTaskInterface();
-     //   if (!task) {
-      //      spdlog::warn("[FB] Morph.Clear: task interface missing");
-    //        return;
-    //    }
+       // Attempt task-queued version first: safer for multi-threaded contexts
+       // If this causes issues, fall back to Clear_MainThread() direct call below
+       auto* task = SKSE::GetTaskInterface();
+       if (!task) {
+           spdlog::warn("[FB] Morph.Clear: task interface missing; falling back to direct call");
+           Clear_MainThread(actor, morphName);
+           return;
+       }
 
-   //     const RE::ActorHandle handle = actor->CreateRefHandle();
-   //     const std::string nameCopy(morphName);
+       const RE::ActorHandle handle = actor->CreateRefHandle();
+       const std::string nameCopy(morphName);
 
-   //     task->AddTask([handle, nameCopy]() {
-    //        auto aPtr = handle.get();
-     //       auto* a = aPtr.get();
-    //        if (!a) {
-     //           spdlog::info("[FB] Morph.Clear(task): actor handle resolved to null");
-    //            return;
-    //        }
+       task->AddTask([handle, nameCopy]() {
+           auto aPtr = handle.get();
+           auto* a = aPtr.get();
+           if (!a) {
+               spdlog::info("[FB] Morph.Clear(task): actor handle resolved to null");
+               return;
+           }
 
             // extra safety: actor might unload between queue and execution
-  //          if (!a->Get3D1(false)) {
-  //              spdlog::info("[FB] Morph.Clear(task): skip (3D not loaded) actor=0x{:08X}", a->formID);
-     //           return;
-   //         }
+           if (!a->Get3D1(false)) {
+               spdlog::info("[FB] Morph.Clear(task): skip (3D not loaded) actor=0x{:08X}", a->formID);
+               return;
+           }
 
-  //          Clear_MainThread(a, nameCopy);
-  //      });
- //   }
-}
+           Clear_MainThread(a, nameCopy);
+       });
+   }
+    
+   // Commented fallback: Direct call to Clear_MainThread() if task queuing fails
+   // Use if you encounter timing/reentrancy issues with the task-queued version above
+   // void Clear(RE::Actor* actor, std::string_view morphName) {
+   //     Clear_MainThread(actor, morphName);
+   // }

@@ -97,18 +97,19 @@ void FBEvents::HandleAnimEvent(const RE::BSAnimationGraphEvent& evn) {
         spdlog::info("[FB] AnimEvt: tag='{}' actor=0x{:08X}", evn.tag.c_str(), actor->formID);
     }
 
-    if (evn.tag == "FBEvent") {
+    // PIE (Payload Interpreter Event) migration: listen for events with "FB:*" or "FB_*" tags
+    // Payload Interpreter fires "PIE" with custom payloads in the tag field.
+    // For FullBodied, we use:
+    //   "FB:paired_huga"           - Start animation (script key)
+    //   "FB_PAIR_END:paired_huga"  - End animation (script key)
+    std::string_view tagView(evn.tag.c_str());
+    
+    if (tagView.starts_with("FB:") || tagView.starts_with("FB_PAIR_END:")) {
         FBEvent e{};
-        e.tag = "FBEvent";
+        e.tag = std::string(tagView);  // Store full tag (e.g., "FB:paired_huga" or "FB_PAIR_END:paired_huga")
         e.actor.formID = actor->formID;
         Push(e);
-        spdlog::info("[FB] AnimEvt: queued FBEvent for actor=0x{:08X}", e.actor.formID);
-    } else if (evn.tag == "PairEnd") {
-        FBEvent e{};
-        e.tag = "PairEnd";
-        e.actor.formID = actor->formID;
-        Push(e);
-        spdlog::info("[FB] AnimEvt: queued PairEnd for actor=0x{:08X}", e.actor.formID);
+        spdlog::info("[FB] AnimEvt (PIE): queued tag='{}' for actor=0x{:08X}", e.tag, e.actor.formID);
     }
 }
 
